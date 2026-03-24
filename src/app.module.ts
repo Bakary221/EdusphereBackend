@@ -1,0 +1,36 @@
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { PrismaModule } from '@database/prisma.module';
+import { AuthModule } from '@modules/auth/auth.module';
+import { HealthController } from './app/health.controller';
+import { RootController } from './app/root.controller';
+import { TenantMiddleware } from '@common/middleware/tenant.middleware';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '.env',
+    }),
+    ThrottlerModule.forRoot({
+      throttlers: [
+        {
+          ttl: 60,
+          limit: 10,
+        },
+      ],
+    }),
+    PrismaModule,
+    AuthModule,
+  ],
+  controllers: [HealthController, RootController],
+})
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Le TenantMiddleware s'exécute sur toutes les routes.
+    // Il attache req.school si X-Tenant-Slug est présent et valide.
+    consumer.apply(TenantMiddleware).forRoutes('*');
+  }
+}
+
