@@ -6,4 +6,5 @@ export interface ITenant {
   name: string;
   status: SchoolStatus;
   plan: string;
+  databaseUrl: string;
 }

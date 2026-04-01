@@ -1,30 +1,65 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
 var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
     var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
     if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
 const common_1 = require("@nestjs/common");
+const config_1 = require("@nestjs/config");
 const error_codes_enum_1 = require("../../common/enums/error-codes.enum");
 const messages_util_1 = require("../../common/utils/messages.util");
 const jwt_1 = require("@nestjs/jwt");
-const bcrypt = require("bcrypt");
+const bcrypt = __importStar(require("bcrypt"));
 const auth_repository_1 = require("./auth.repository");
 const client_1 = require("@prisma/client");
 let AuthService = class AuthService {
-    constructor(authRepository, jwtService) {
+    constructor(authRepository, jwtService, configService) {
         this.authRepository = authRepository;
         this.jwtService = jwtService;
+        this.configService = configService;
     }
-    async login(loginDto, ipAddress, schoolId = null) {
-        console.log('🔍 [LOGIN] Email:', loginDto.email, 'SchoolId:', schoolId, 'IP:', ipAddress);
-        const user = await this.authRepository.findUserByEmail(loginDto.email, schoolId ?? undefined);
+    async login(loginDto, ipAddress, tenant) {
+        console.log('🔍 [LOGIN] Email:', loginDto.email, 'Tenant:', tenant?.slug ?? 'global', 'IP:', ipAddress);
+        const user = await this.authRepository.findUserByEmail(loginDto.email, tenant);
         console.log('👤 [LOGIN] User found:', !!user ? user.role : 'null');
         if (!user || !(await bcrypt.compare(loginDto.password, user.passwordHash))) {
             console.log('❌ [LOGIN] Auth failed - invalid credentials');
@@ -34,7 +69,7 @@ let AuthService = class AuthService {
             });
         }
         console.log('✅ [LOGIN] Password OK, role:', user.role);
-        if (schoolId === null && user.role !== client_1.UserRole.SUPER_ADMIN) {
+        if (!tenant && user.role !== client_1.UserRole.SUPER_ADMIN) {
             throw new common_1.UnauthorizedException({
                 code: error_codes_enum_1.ErrorCode.AUTH_INVALID_CREDENTIALS,
                 message: (0, messages_util_1.getErrorMessage)(error_codes_enum_1.ErrorCode.AUTH_INVALID_CREDENTIALS),
@@ -51,7 +86,7 @@ let AuthService = class AuthService {
             sub: user.id,
             email: user.email,
             role: user.role,
-            schoolId: user.schoolId,
+            schoolId: tenant?.id ?? null,
         };
         const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
         const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
@@ -63,7 +98,7 @@ let AuthService = class AuthService {
             refreshToken,
             expiresAt,
             ipAddress,
-        });
+        }, tenant);
         console.log('✅ [LOGIN] Session created, login SUCCESS');
         return {
             accessToken,
@@ -74,7 +109,7 @@ let AuthService = class AuthService {
                 firstName: user.firstName,
                 lastName: user.lastName,
                 role: user.role,
-                schoolId: user.schoolId,
+                schoolId: tenant?.id ?? null,
             },
         };
     }
@@ -86,44 +121,65 @@ let AuthService = class AuthService {
                 message: (0, messages_util_1.getErrorMessage)(error_codes_enum_1.ErrorCode.SCHOOL_SLUG_EXISTS),
             });
         }
-        const hashedPassword = await bcrypt.hash(dto.adminPassword, 12);
+        const adminTempPassword = this.configService.get('TENANT_ADMIN_TEMP_PASSWORD') ??
+            'Password123!';
+        const hashedPassword = await bcrypt.hash(adminTempPassword, 12);
         return this.authRepository.createSchoolWithAdmin({
             ...dto,
-            adminPassword: hashedPassword,
+            adminPasswordHash: hashedPassword,
         });
     }
     async refreshToken(refreshToken) {
-        const session = await this.authRepository.findSessionByRefreshToken(refreshToken);
+        let payload;
+        try {
+            payload = this.jwtService.verify(refreshToken);
+        }
+        catch (error) {
+            throw new common_1.UnauthorizedException({
+                code: error_codes_enum_1.ErrorCode.AUTH_INVALID_REFRESH_TOKEN,
+                message: (0, messages_util_1.getErrorMessage)(error_codes_enum_1.ErrorCode.AUTH_INVALID_REFRESH_TOKEN),
+            });
+        }
+        const tenant = payload.schoolId
+            ? await this.authRepository.findSchoolById(payload.schoolId)
+            : null;
+        if (payload.schoolId && !tenant) {
+            throw new common_1.UnauthorizedException({
+                code: error_codes_enum_1.ErrorCode.AUTH_INVALID_REFRESH_TOKEN,
+                message: (0, messages_util_1.getErrorMessage)(error_codes_enum_1.ErrorCode.AUTH_INVALID_REFRESH_TOKEN),
+            });
+        }
+        const session = await this.authRepository.findSessionByRefreshToken(refreshToken, tenant);
         if (!session || session.expiresAt < new Date()) {
             throw new common_1.UnauthorizedException({
                 code: error_codes_enum_1.ErrorCode.AUTH_INVALID_REFRESH_TOKEN,
                 message: (0, messages_util_1.getErrorMessage)(error_codes_enum_1.ErrorCode.AUTH_INVALID_REFRESH_TOKEN),
             });
         }
-        const user = await this.authRepository.findUserById(session.userId);
+        const user = await this.authRepository.findUserById(session.userId, tenant);
         if (!user) {
             throw new common_1.UnauthorizedException({
                 code: error_codes_enum_1.ErrorCode.AUTH_USER_NOT_FOUND,
                 message: (0, messages_util_1.getErrorMessage)(error_codes_enum_1.ErrorCode.AUTH_USER_NOT_FOUND),
             });
         }
-        const payload = {
+        const newPayload = {
             sub: user.id,
             email: user.email,
             role: user.role,
-            schoolId: user.schoolId,
+            schoolId: tenant?.id ?? null,
         };
-        const newAccessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
-        const newRefreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+        const newAccessToken = this.jwtService.sign(newPayload, { expiresIn: '15m' });
+        const newRefreshToken = this.jwtService.sign(newPayload, { expiresIn: '7d' });
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-        await this.authRepository.deleteSessionById(session.id);
+        await this.authRepository.deleteSessionById(session.id, tenant);
         await this.authRepository.createSession({
             userId: user.id,
             token: newAccessToken,
             refreshToken: newRefreshToken,
             expiresAt,
             ipAddress: session.ipAddress ?? undefined,
-        });
+        }, tenant);
         return {
             accessToken: newAccessToken,
             refreshToken: newRefreshToken,
@@ -133,18 +189,19 @@ let AuthService = class AuthService {
                 firstName: user.firstName,
                 lastName: user.lastName,
                 role: user.role,
-                schoolId: user.schoolId,
+                schoolId: tenant?.id ?? null,
             },
         };
     }
-    async logout(userId) {
-        await this.authRepository.deleteUserSessions(userId);
+    async logout(userId, tenant) {
+        await this.authRepository.deleteUserSessions(userId, tenant);
     }
 };
 exports.AuthService = AuthService;
 exports.AuthService = AuthService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [auth_repository_1.AuthRepository,
-        jwt_1.JwtService])
+        jwt_1.JwtService,
+        config_1.ConfigService])
 ], AuthService);
 //# sourceMappingURL=auth.service.js.map

@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.RegisterSchoolDto = void 0;
 const class_validator_1 = require("class-validator");
 const swagger_1 = require("@nestjs/swagger");
+const client_1 = require("@prisma/client");
 class RegisterSchoolDto {
 }
 exports.RegisterSchoolDto = RegisterSchoolDto;
@@ -28,6 +29,18 @@ __decorate([
     (0, class_validator_1.IsNotEmpty)({ message: 'Le slug est obligatoire' }),
     __metadata("design:type", String)
 ], RegisterSchoolDto.prototype, "slug", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ example: 'PRIVATE', enum: client_1.SchoolType, required: false }),
+    (0, class_validator_1.IsEnum)(client_1.SchoolType),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "type", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ example: 'free', required: false }),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "plan", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)({ example: 'contact@lycee-moderne.com', description: 'Email de contact école' }),
     (0, class_validator_1.IsEmail)({}, { message: 'L\'email de contact n\'est pas valide' }),
@@ -52,11 +65,4 @@ __decorate([
     (0, class_validator_1.IsNotEmpty)({ message: 'Le nom de l\'admin est obligatoire' }),
     __metadata("design:type", String)
 ], RegisterSchoolDto.prototype, "adminLastName", void 0);
-__decorate([
-    (0, swagger_1.ApiProperty)({ example: 'Password123!', description: 'Mot de passe admin (min 8)' }),
-    (0, class_validator_1.IsString)({ message: 'Le mot de passe admin doit être une chaîne de caractères' }),
-    (0, class_validator_1.MinLength)(8, { message: 'Le mot de passe admin doit contenir au moins 8 caractères' }),
-    (0, class_validator_1.IsNotEmpty)({ message: 'Le mot de passe admin est obligatoire' }),
-    __metadata("design:type", String)
-], RegisterSchoolDto.prototype, "adminPassword", void 0);
 //# sourceMappingURL=register-school.dto.js.map

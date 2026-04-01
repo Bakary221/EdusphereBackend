@@ -15,8 +15,9 @@ const passport_1 = require("@nestjs/passport");
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const prisma_service_1 = require("../../../database/prisma.service");
+const tenant_database_service_1 = require("../../../database/tenant-database.service");
 let JwtStrategy = class JwtStrategy extends (0, passport_1.PassportStrategy)(passport_jwt_1.Strategy) {
-    constructor(configService, prisma) {
+    constructor(configService, prisma, tenantDatabaseService) {
         super({
             jwtFromRequest: passport_jwt_1.ExtractJwt.fromAuthHeaderAsBearerToken(),
             ignoreExpiration: false,
@@ -24,15 +25,38 @@ let JwtStrategy = class JwtStrategy extends (0, passport_1.PassportStrategy)(pas
         });
         this.configService = configService;
         this.prisma = prisma;
+        this.tenantDatabaseService = tenantDatabaseService;
     }
     async validate(payload) {
-        const user = await this.prisma.user.findUnique({
+        let tenant = null;
+        let prismaClient = this.prisma;
+        if (payload.schoolId) {
+            const school = await this.prisma.school.findUnique({
+                where: { id: payload.schoolId },
+                select: {
+                    id: true,
+                    slug: true,
+                    name: true,
+                    status: true,
+                    plan: true,
+                    databaseUrl: true,
+                },
+            });
+            if (!school) {
+                throw new common_1.UnauthorizedException('Tenant introuvable');
+            }
+            if (school.status !== 'ACTIVE') {
+                throw new common_1.UnauthorizedException('Tenant inactif');
+            }
+            tenant = school;
+            prismaClient = await this.tenantDatabaseService.getClientForTenant(tenant);
+        }
+        const user = await prismaClient.user.findUnique({
             where: { id: payload.sub },
             select: {
                 id: true,
                 email: true,
                 role: true,
-                schoolId: true,
                 isActive: true,
             },
         });
@@ -42,15 +66,12 @@ let JwtStrategy = class JwtStrategy extends (0, passport_1.PassportStrategy)(pas
         if (!user.isActive) {
             throw new common_1.UnauthorizedException('Compte désactivé');
         }
-        if (payload.schoolId !== user.schoolId) {
-            throw new common_1.UnauthorizedException('Token invalide pour ce tenant');
-        }
         return {
             id: user.id,
             sub: user.id,
             email: user.email,
             role: user.role,
-            schoolId: user.schoolId,
+            schoolId: payload.schoolId ?? null,
         };
     }
 };
@@ -58,6 +79,7 @@ exports.JwtStrategy = JwtStrategy;
 exports.JwtStrategy = JwtStrategy = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [config_1.ConfigService,
-        prisma_service_1.PrismaService])
+        prisma_service_1.PrismaService,
+        tenant_database_service_1.TenantDatabaseService])
 ], JwtStrategy);
 //# sourceMappingURL=jwt.strategy.js.map

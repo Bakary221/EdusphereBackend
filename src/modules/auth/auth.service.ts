@@ -1,10 +1,10 @@
 import {
   Injectable,
   UnauthorizedException,
-  BadRequestException,
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ErrorCode } from '@common/enums/error-codes.enum';
 import { getErrorMessage } from '@common/utils/messages.util';
 import { JwtService } from '@nestjs/jwt';
@@ -13,6 +13,7 @@ import { AuthRepository, CreateSchoolWithAdminDto } from './auth.repository';
 import { LoginDto } from './dto/login.dto';
 import { RegisterSchoolDto } from './dto/register-school.dto';
 import { UserRole } from '@prisma/client';
+import { ITenant } from '@common/interfaces/tenant.interface';
 
 export interface JwtPayload {
   sub: string;
@@ -39,6 +40,7 @@ export class AuthService {
   constructor(
     private authRepository: AuthRepository,
     private jwtService: JwtService,
+    private configService: ConfigService,
   ) {}
 
   /**
@@ -46,15 +48,14 @@ export class AuthService {
    *
    * @param loginDto   - { email, password }
    * @param ipAddress  - Adresse IP de la requête (pour la session)
-   * @param schoolId   - ID de l'école résolu depuis le sous-domaine (null = SUPER_ADMIN)
+   * @param tenant     - Tenant résolu depuis le sous-domaine (null = SUPER_ADMIN)
    */
-async login(loginDto: LoginDto, ipAddress: string, schoolId: string | null = null): Promise<AuthResponse> {
-    console.log('🔍 [LOGIN] Email:', loginDto.email, 'SchoolId:', schoolId, 'IP:', ipAddress);
-    
-    // Cherche l'utilisateur DANS le tenant (ou globalement pour SUPER_ADMIN)
+async login(loginDto: LoginDto, ipAddress: string, tenant: ITenant | null): Promise<AuthResponse> {
+    console.log('🔍 [LOGIN] Email:', loginDto.email, 'Tenant:', tenant?.slug ?? 'global', 'IP:', ipAddress);
+
     const user = await this.authRepository.findUserByEmail(
       loginDto.email,
-      schoolId ?? undefined,
+      tenant,
     );
     console.log('👤 [LOGIN] User found:', !!user ? user.role : 'null');
 
@@ -67,10 +68,7 @@ async login(loginDto: LoginDto, ipAddress: string, schoolId: string | null = nul
     }
     console.log('✅ [LOGIN] Password OK, role:', user.role);
 
-    // Vérifie que le SUPER_ADMIN ne tente pas de se connecter via un sous-domaine
-    // et qu'un user d'école ne tente pas de se connecter sans sous-domaine
-    if (schoolId === null && user.role !== UserRole.SUPER_ADMIN) {
-      // Un user d'école tente de se connecter sans tenant → refus
+    if (!tenant && user.role !== UserRole.SUPER_ADMIN) {
       throw new UnauthorizedException({
         code: ErrorCode.AUTH_INVALID_CREDENTIALS,
         message: getErrorMessage(ErrorCode.AUTH_INVALID_CREDENTIALS),
@@ -84,13 +82,12 @@ async login(loginDto: LoginDto, ipAddress: string, schoolId: string | null = nul
       });
     }
 
-    // Génération des tokens JWT
     console.log('🔑 [LOGIN] Generating JWT tokens...');
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
-      schoolId: user.schoolId,
+      schoolId: tenant?.id ?? null,
     };
 
     const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
@@ -98,14 +95,13 @@ async login(loginDto: LoginDto, ipAddress: string, schoolId: string | null = nul
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     console.log('📱 [LOGIN] Creating session...');
-    // Création de la session
     await this.authRepository.createSession({
       userId: user.id,
       token: accessToken,
       refreshToken,
       expiresAt,
       ipAddress,
-    });
+    }, tenant);
     console.log('✅ [LOGIN] Session created, login SUCCESS');
 
     return {
@@ -117,7 +113,7 @@ async login(loginDto: LoginDto, ipAddress: string, schoolId: string | null = nul
         firstName: user.firstName,
         lastName: user.lastName,
         role: user.role,
-        schoolId: user.schoolId,
+        schoolId: tenant?.id ?? null,
       },
     };
   }
@@ -136,16 +132,40 @@ async login(loginDto: LoginDto, ipAddress: string, schoolId: string | null = nul
       });
     }
 
-    const hashedPassword = await bcrypt.hash(dto.adminPassword, 12);
+    const adminTempPassword =
+      this.configService.get<string>('TENANT_ADMIN_TEMP_PASSWORD') ??
+      'Password123!';
+    const hashedPassword = await bcrypt.hash(adminTempPassword, 12);
 
     return this.authRepository.createSchoolWithAdmin({
       ...dto,
-      adminPassword: hashedPassword,
+      adminPasswordHash: hashedPassword,
     });
   }
 
   async refreshToken(refreshToken: string): Promise<AuthResponse> {
-    const session = await this.authRepository.findSessionByRefreshToken(refreshToken);
+    let payload: JwtPayload;
+    try {
+      payload = this.jwtService.verify<JwtPayload>(refreshToken);
+    } catch (error) {
+      throw new UnauthorizedException({
+        code: ErrorCode.AUTH_INVALID_REFRESH_TOKEN,
+        message: getErrorMessage(ErrorCode.AUTH_INVALID_REFRESH_TOKEN),
+      });
+    }
+
+    const tenant = payload.schoolId
+      ? await this.authRepository.findSchoolById(payload.schoolId)
+      : null;
+
+    if (payload.schoolId && !tenant) {
+      throw new UnauthorizedException({
+        code: ErrorCode.AUTH_INVALID_REFRESH_TOKEN,
+        message: getErrorMessage(ErrorCode.AUTH_INVALID_REFRESH_TOKEN),
+      });
+    }
+
+    const session = await this.authRepository.findSessionByRefreshToken(refreshToken, tenant);
 
     if (!session || session.expiresAt < new Date()) {
       throw new UnauthorizedException({
@@ -154,7 +174,7 @@ async login(loginDto: LoginDto, ipAddress: string, schoolId: string | null = nul
       });
     }
 
-    const user = await this.authRepository.findUserById(session.userId);
+    const user = await this.authRepository.findUserById(session.userId, tenant);
     if (!user) {
       throw new UnauthorizedException({
         code: ErrorCode.AUTH_USER_NOT_FOUND,
@@ -162,42 +182,41 @@ async login(loginDto: LoginDto, ipAddress: string, schoolId: string | null = nul
       });
     }
 
-    const payload: JwtPayload = {
+    const newPayload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
-      schoolId: user.schoolId,
+      schoolId: tenant?.id ?? null,
     };
 
-    const newAccessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
-    const newRefreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+    const newAccessToken = this.jwtService.sign(newPayload, { expiresIn: '15m' });
+    const newRefreshToken = this.jwtService.sign(newPayload, { expiresIn: '7d' });
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    // Rotation du refresh token
-    await this.authRepository.deleteSessionById(session.id);
+    await this.authRepository.deleteSessionById(session.id, tenant);
     await this.authRepository.createSession({
       userId: user.id,
       token: newAccessToken,
       refreshToken: newRefreshToken,
       expiresAt,
       ipAddress: session.ipAddress ?? undefined,
-    });
+    }, tenant);
 
-    return {
-      accessToken: newAccessToken,
-      refreshToken: newRefreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        schoolId: user.schoolId,
-      },
-    };
+      return {
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          schoolId: tenant?.id ?? null,
+        },
+      };
   }
 
-  async logout(userId: string): Promise<void> {
-    await this.authRepository.deleteUserSessions(userId);
+  async logout(userId: string, tenant: ITenant | null): Promise<void> {
+    await this.authRepository.deleteUserSessions(userId, tenant);
   }
 }

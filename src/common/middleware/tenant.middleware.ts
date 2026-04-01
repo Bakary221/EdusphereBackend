@@ -5,6 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@database/prisma.service';
 import { ErrorCode } from '@common/enums/error-codes.enum';
 import { getErrorMessage } from '@common/utils/messages.util';
@@ -21,7 +22,10 @@ import { ITenant } from '@common/interfaces/tenant.interface';
  */
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   async use(req: Request & { school?: ITenant | null }, res: Response, next: NextFunction) {
     const slug = req.headers['x-tenant-slug'] as string | undefined;
@@ -29,13 +33,33 @@ export class TenantMiddleware implements NestMiddleware {
     // Pas de header → contexte sans tenant (SUPER_ADMIN)
     if (!slug || slug.trim() === '') {
       req.school = null;
-      return next();
+      const hostnameSlug = this.extractSlugFromHostname(req.hostname);
+      if (!hostnameSlug) {
+        return next();
+      }
+      return this.handleTenant(hostnameSlug, req, next);
     }
 
-    // Cherche l'école par son slug
+    const normalizedSlug = slug.trim().toLowerCase();
+    return this.handleTenant(normalizedSlug, req, next);
+  }
+
+  private async handleTenant(
+    normalizedSlug: string,
+    req: Request & { school?: ITenant | null },
+    next: NextFunction,
+  ) {
+    const slug = normalizedSlug;
     const school = await this.prisma.school.findUnique({
-      where: { slug: slug.trim().toLowerCase() },
-      select: { id: true, slug: true, name: true, status: true, plan: true },
+      where: { slug },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        status: true,
+        plan: true,
+        databaseUrl: true,
+      },
     });
 
     if (!school) {
@@ -55,5 +79,23 @@ export class TenantMiddleware implements NestMiddleware {
     // Attache le tenant à la requête HTTP
     req.school = school as ITenant;
     next();
+  }
+
+  private extractSlugFromHostname(hostname?: string): string | null {
+    if (!hostname) return null;
+    const baseDomain = this.config.get<string>('TENANT_BASE_DOMAIN')?.trim().toLowerCase();
+    const normalizedHostname = hostname.split(':')[0].toLowerCase();
+    if (!baseDomain || !baseDomain.length) {
+      return null;
+    }
+    if (normalizedHostname === baseDomain) {
+      return null;
+    }
+    if (!normalizedHostname.endsWith(baseDomain)) {
+      return null;
+    }
+    const slugPart = normalizedHostname.slice(0, normalizedHostname.length - baseDomain.length);
+    const cleaned = slugPart.replace(/\.$/, '').replace(/^\./, '');
+    return cleaned.length > 0 ? cleaned : null;
   }
 }

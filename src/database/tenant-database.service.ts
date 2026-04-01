@@ -1,0 +1,40 @@
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
+import { ITenant } from '@common/interfaces/tenant.interface';
+
+@Injectable()
+export class TenantDatabaseService implements OnModuleDestroy {
+  private readonly logger = new Logger(TenantDatabaseService.name);
+  private readonly clients = new Map<string, PrismaClient>();
+
+  async getClientForTenant(tenant: ITenant): Promise<PrismaClient> {
+    if (!tenant.databaseUrl || tenant.databaseUrl.trim() === '') {
+      throw new Error(`Tenant ${tenant.slug} is missing databaseUrl`);
+    }
+
+    const cacheKey = `${tenant.slug}:${tenant.databaseUrl}`;
+    if (this.clients.has(cacheKey)) {
+      return this.clients.get(cacheKey)!;
+    }
+
+    this.logger.log(`Creating Prisma client for tenant ${tenant.slug}`);
+    const client = new PrismaClient({
+      datasources: {
+        db: {
+          url: tenant.databaseUrl,
+        },
+      },
+    });
+
+    await client.$connect();
+    this.clients.set(cacheKey, client);
+    return client;
+  }
+
+  async onModuleDestroy() {
+    const disconnects = Array.from(this.clients.values()).map((client) =>
+      client.$disconnect(),
+    );
+    await Promise.all(disconnects);
+  }
+}

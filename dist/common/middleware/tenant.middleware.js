@@ -11,22 +11,40 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TenantMiddleware = void 0;
 const common_1 = require("@nestjs/common");
+const config_1 = require("@nestjs/config");
 const prisma_service_1 = require("../../database/prisma.service");
 const error_codes_enum_1 = require("../enums/error-codes.enum");
 const messages_util_1 = require("../utils/messages.util");
 let TenantMiddleware = class TenantMiddleware {
-    constructor(prisma) {
+    constructor(prisma, config) {
         this.prisma = prisma;
+        this.config = config;
     }
     async use(req, res, next) {
         const slug = req.headers['x-tenant-slug'];
         if (!slug || slug.trim() === '') {
             req.school = null;
-            return next();
+            const hostnameSlug = this.extractSlugFromHostname(req.hostname);
+            if (!hostnameSlug) {
+                return next();
+            }
+            return this.handleTenant(hostnameSlug, req, next);
         }
+        const normalizedSlug = slug.trim().toLowerCase();
+        return this.handleTenant(normalizedSlug, req, next);
+    }
+    async handleTenant(normalizedSlug, req, next) {
+        const slug = normalizedSlug;
         const school = await this.prisma.school.findUnique({
-            where: { slug: slug.trim().toLowerCase() },
-            select: { id: true, slug: true, name: true, status: true, plan: true },
+            where: { slug },
+            select: {
+                id: true,
+                slug: true,
+                name: true,
+                status: true,
+                plan: true,
+                databaseUrl: true,
+            },
         });
         if (!school) {
             throw new common_1.NotFoundException({
@@ -43,10 +61,29 @@ let TenantMiddleware = class TenantMiddleware {
         req.school = school;
         next();
     }
+    extractSlugFromHostname(hostname) {
+        if (!hostname)
+            return null;
+        const baseDomain = this.config.get('TENANT_BASE_DOMAIN')?.trim().toLowerCase();
+        const normalizedHostname = hostname.split(':')[0].toLowerCase();
+        if (!baseDomain || !baseDomain.length) {
+            return null;
+        }
+        if (normalizedHostname === baseDomain) {
+            return null;
+        }
+        if (!normalizedHostname.endsWith(baseDomain)) {
+            return null;
+        }
+        const slugPart = normalizedHostname.slice(0, normalizedHostname.length - baseDomain.length);
+        const cleaned = slugPart.replace(/\.$/, '').replace(/^\./, '');
+        return cleaned.length > 0 ? cleaned : null;
+    }
 };
 exports.TenantMiddleware = TenantMiddleware;
 exports.TenantMiddleware = TenantMiddleware = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        config_1.ConfigService])
 ], TenantMiddleware);
 //# sourceMappingURL=tenant.middleware.js.map

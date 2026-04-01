@@ -39,7 +39,7 @@ export declare class AuthController {
             logout: string;
         };
     }>;
-    logout(userId: string, req: any): Promise<{
+    logout(userId: string, tenant: ITenant | null, req: any): Promise<{
         data: any;
         message: string;
         _links: {

@@ -12,6 +12,7 @@ const config_1 = require("@nestjs/config");
 const throttler_1 = require("@nestjs/throttler");
 const prisma_module_1 = require("./database/prisma.module");
 const auth_module_1 = require("./modules/auth/auth.module");
+const super_admin_module_1 = require("./modules/super-admin/super-admin.module");
 const health_controller_1 = require("./app/health.controller");
 const root_controller_1 = require("./app/root.controller");
 const tenant_middleware_1 = require("./common/middleware/tenant.middleware");
@@ -38,6 +39,7 @@ exports.AppModule = AppModule = __decorate([
             }),
             prisma_module_1.PrismaModule,
             auth_module_1.AuthModule,
+            super_admin_module_1.SuperAdminModule,
         ],
         controllers: [health_controller_1.HealthController, root_controller_1.RootController],
     })

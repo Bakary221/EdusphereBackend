@@ -1,5 +1,6 @@
-import { IsEmail, IsString, MinLength, IsNotEmpty, Length } from 'class-validator';
+import { IsEmail, IsString, IsNotEmpty, Length, IsEnum, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { SchoolType } from '@prisma/client';
 
 export class RegisterSchoolDto {
   @ApiProperty({ example: 'Lycée Moderne', description: "Nom de l'ecole" })
@@ -12,6 +13,16 @@ export class RegisterSchoolDto {
   @Length(3, 50, { message: 'Le slug doit contenir entre 3 et 50 caractères' })
   @IsNotEmpty({ message: 'Le slug est obligatoire' })
   slug: string;
+
+  @ApiProperty({ example: 'PRIVATE', enum: SchoolType, required: false })
+  @IsEnum(SchoolType)
+  @IsOptional()
+  type?: SchoolType;
+
+  @ApiProperty({ example: 'free', required: false })
+  @IsString()
+  @IsOptional()
+  plan?: string;
 
   @ApiProperty({ example: 'contact@lycee-moderne.com', description: 'Email de contact école' })
   @IsEmail({}, { message: 'L\'email de contact n\'est pas valide' })
@@ -33,10 +44,4 @@ export class RegisterSchoolDto {
   @IsNotEmpty({ message: 'Le nom de l\'admin est obligatoire' })
   adminLastName: string;
 
-  @ApiProperty({ example: 'Password123!', description: 'Mot de passe admin (min 8)' })
-  @IsString({ message: 'Le mot de passe admin doit être une chaîne de caractères' })
-  @MinLength(8, { message: 'Le mot de passe admin doit contenir au moins 8 caractères' })
-  @IsNotEmpty({ message: 'Le mot de passe admin est obligatoire' })
-  adminPassword: string;
 }
-

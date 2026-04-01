@@ -12,6 +12,7 @@ model School {
   id            String    @id @default(cuid())
   name          String
   slug          String    @unique
+  databaseUrl   String
   type          SchoolType
   status        SchoolStatus @default(PENDING)
   plan          String    @default("free")
@@ -20,15 +21,13 @@ model School {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  users         User[]
-  
   @@index([slug])
   @@index([status])
 }
 
 model User {
   id               String    @id @default(cuid())
-  email            String
+  email            String    @unique
   passwordHash     String
   firstName        String
   lastName         String
@@ -37,10 +36,6 @@ model User {
   phone            String?
   isActive         Boolean   @default(true)
   emailVerified    Boolean   @default(false)
-  
-  // Multi-tenant
-  schoolId         String?
-  school           School?   @relation(fields: [schoolId], references: [id])
   
   // Sécurité
   lastLoginAt      DateTime?
@@ -55,10 +50,6 @@ model User {
   
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
-
-  @@unique([email, schoolId])
-  @@index([schoolId])
-  @@index([role])
 }
 
 model Session {

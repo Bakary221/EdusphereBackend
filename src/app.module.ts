@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from '@database/prisma.module';
 import { AuthModule } from '@modules/auth/auth.module';
+import { SuperAdminModule } from '@modules/super-admin/super-admin.module';
 import { HealthController } from './app/health.controller';
 import { RootController } from './app/root.controller';
 import { TenantMiddleware } from '@common/middleware/tenant.middleware';
@@ -23,6 +24,7 @@ import { TenantMiddleware } from '@common/middleware/tenant.middleware';
     }),
     PrismaModule,
     AuthModule,
+    SuperAdminModule,
   ],
   controllers: [HealthController, RootController],
 })
@@ -33,4 +35,3 @@ export class AppModule implements NestModule {
     consumer.apply(TenantMiddleware).forRoutes('*');
   }
 }
-

@@ -7,6 +7,7 @@ import { AuthRepository } from './auth.repository';
 import { PrismaModule } from '@database/prisma.module';
 import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { RolesGuard } from '@common/guards/roles.guard';
 
 @Module({
   imports: [
@@ -25,8 +26,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     AuthRepository,
     LocalStrategy,
     JwtStrategy,
+    RolesGuard,
   ],
-  exports: [AuthService],
+  exports: [AuthService, AuthRepository],
 })
 export class AuthModule {}
-

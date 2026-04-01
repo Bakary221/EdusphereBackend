@@ -8,29 +8,41 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var AuthRepository_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthRepository = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../database/prisma.service");
-let AuthRepository = AuthRepository_1 = class AuthRepository {
-    constructor(prisma) {
+const tenant_database_service_1 = require("../../database/tenant-database.service");
+const tenant_provisioning_service_1 = require("../../database/tenant-provisioning.service");
+let AuthRepository = class AuthRepository {
+    constructor(prisma, tenantDatabaseService, tenantProvisioningService) {
         this.prisma = prisma;
-        this.logger = new common_1.Logger(AuthRepository_1.name);
+        this.tenantDatabaseService = tenantDatabaseService;
+        this.tenantProvisioningService = tenantProvisioningService;
     }
-    async findUserByEmail(email, schoolId) {
-        return this.prisma.user.findFirst({
+    async resolvePrismaClient(tenant) {
+        if (tenant) {
+            return this.tenantDatabaseService.getClientForTenant(tenant);
+        }
+        return this.prisma;
+    }
+    async findUserByEmail(email, tenant) {
+        const prisma = await this.resolvePrismaClient(tenant);
+        return prisma.user.findFirst({
             where: {
                 email,
-                ...(schoolId && { schoolId }),
             },
         });
     }
-    async findUserById(id) {
-        return this.prisma.user.findUnique({ where: { id } });
+    async findUserById(id, tenant) {
+        const prisma = await this.resolvePrismaClient(tenant);
+        return prisma.user.findUnique({ where: { id } });
     }
     async findSchoolBySlug(slug) {
         return this.prisma.school.findUnique({ where: { slug } });
+    }
+    async findSchoolById(id) {
+        return this.prisma.school.findUnique({ where: { id } });
     }
     async createUser(data) {
         return this.prisma.user.create({ data });
@@ -42,45 +54,73 @@ let AuthRepository = AuthRepository_1 = class AuthRepository {
         });
     }
     async createSchoolWithAdmin(data) {
+        const databaseUrl = await this.tenantProvisioningService.ensureTenantDatabase(data.slug);
         return this.prisma.$transaction(async (tx) => {
             const school = await tx.school.create({
                 data: {
                     name: data.name,
                     slug: data.slug,
                     email: data.email,
-                    type: 'PRIVATE',
+                    type: data.type ?? 'PRIVATE',
                     status: 'ACTIVE',
+                    plan: data.plan ?? 'free',
+                    databaseUrl,
                 },
             });
-            const admin = await tx.user.create({
+            const tenant = {
+                id: school.id,
+                slug: school.slug,
+                name: school.name,
+                status: school.status,
+                plan: school.plan,
+                databaseUrl,
+            };
+            const tenantClient = await this.tenantDatabaseService.getClientForTenant(tenant);
+            const admin = await tenantClient.user.create({
                 data: {
                     email: data.adminEmail,
-                    passwordHash: data.adminPassword,
+                    passwordHash: data.adminPasswordHash,
                     firstName: data.adminFirstName,
                     lastName: data.adminLastName,
                     role: 'SCHOOL_ADMIN',
-                    schoolId: school.id,
+                    isActive: true,
+                    emailVerified: true,
                 },
             });
             return { school, admin };
         });
     }
-    async findSessionByRefreshToken(token) {
-        return this.prisma.session.findUnique({ where: { refreshToken: token } });
+    async findSessionByRefreshToken(token, tenant) {
+        const prisma = await this.resolvePrismaClient(tenant);
+        return prisma.session.findUnique({ where: { refreshToken: token } });
     }
-    async createSession(data) {
-        return this.prisma.session.create({ data });
+    async createSession(data, tenant) {
+        const prisma = await this.resolvePrismaClient(tenant);
+        return prisma.session.create({ data });
     }
-    async deleteSessionById(id) {
-        return this.prisma.session.delete({ where: { id } });
+    async deleteSessionById(id, tenant) {
+        const prisma = await this.resolvePrismaClient(tenant);
+        return prisma.session.delete({ where: { id } });
     }
-    async deleteUserSessions(userId) {
-        await this.prisma.session.deleteMany({ where: { userId } });
+    async deleteUserSessions(userId, tenant) {
+        const prisma = await this.resolvePrismaClient(tenant);
+        await prisma.session.deleteMany({ where: { userId } });
+    }
+    async listSchools() {
+        return this.prisma.school.findMany({ orderBy: { createdAt: 'desc' } });
+    }
+    async updateSchoolStatus(id, status) {
+        return this.prisma.school.update({
+            where: { id },
+            data: { status },
+        });
     }
 };
 exports.AuthRepository = AuthRepository;
-exports.AuthRepository = AuthRepository = AuthRepository_1 = __decorate([
+exports.AuthRepository = AuthRepository = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        tenant_database_service_1.TenantDatabaseService,
+        tenant_provisioning_service_1.TenantProvisioningService])
 ], AuthRepository);
 //# sourceMappingURL=auth.repository.js.map

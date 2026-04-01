@@ -26,6 +26,9 @@ import { Public } from '@common/decorators/public.decorator';
 import { getSuccessMessage } from '@common/utils/messages.util';
 import { SuccessMessage } from '@common/enums/success-messages.enum';
 import { ITenant } from '@common/interfaces/tenant.interface';
+import { RolesGuard } from '@common/guards/roles.guard';
+import { Roles } from '@common/decorators/roles.decorator';
+import { UserRole } from '@prisma/client';
 
 @ApiTags('Authentification')
 @Controller('auth')
@@ -54,7 +57,7 @@ export class AuthController {
     const result = await this.authService.login(
       loginDto,
       ipAddress,
-      tenant?.id ?? null,
+      tenant,
     );
     return {
       data: result,
@@ -70,7 +73,9 @@ export class AuthController {
   }
 
   @Post('register')
-  @Public()
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Inscription nouvelle ecole avec admin' })
   @ApiBody({ type: RegisterSchoolDto })
   @ApiOkResponse({ description: 'Ecole creee avec succes' })
@@ -105,8 +110,12 @@ export class AuthController {
 
   @Post('logout')
   @UseGuards(JwtAuthGuard)
-  async logout(@CurrentUser('sub') userId: string, @Req() req: any) {
-    await this.authService.logout(userId);
+  async logout(
+    @CurrentUser('sub') userId: string,
+    @CurrentTenant() tenant: ITenant | null,
+    @Req() req: any,
+  ) {
+    await this.authService.logout(userId, tenant);
     return {
       data: null,
       message: getSuccessMessage(SuccessMessage.LOGOUT_SUCCESS),
@@ -130,4 +139,3 @@ export class AuthController {
     };
   }
 }
-
