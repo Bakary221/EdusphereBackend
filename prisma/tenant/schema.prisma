@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/@prisma/tenant-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  passwordHash        String
+  firstName           String
+  lastName            String
+  role                UserRole
+  avatar              String?
+  phone               String?
+  isActive            Boolean   @default(true)
+  emailVerified       Boolean   @default(false)
+  lastLoginAt         DateTime?
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  passwordChangedAt   DateTime  @default(now())
+  sessions            Session[]
+  totpSecret          String?
+  totpEnabled         Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token        String   @unique
+  refreshToken  String   @unique
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Building {
+  id          String         @id @default(cuid())
+  schoolId    String
+  name        String
+  description String?
+  floorCount  Int            @default(1)
+  status      BuildingStatus @default(active)
+  rooms       Room[]
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([schoolId])
+  @@index([status])
+  @@index([name])
+}
+
+model Room {
+  id          String      @id @default(cuid())
+  schoolId    String
+  buildingId  String
+  building    Building    @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  name        String
+  floor       Int         @default(0)
+  capacity    Int         @default(30)
+  roomType    RoomType
+  status      RoomStatus  @default(active)
+  description String?
+  equipment   String?
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([schoolId])
+  @@index([buildingId])
+  @@index([status])
+  @@index([roomType])
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  SCHOOL_ADMIN
+  TEACHER
+  STUDENT
+  PARENT
+  ACCOUNTANT
+}
+
+enum BuildingStatus {
+  active
+  maintenance
+  inactive
+}
+
+enum RoomStatus {
+  active
+  maintenance
+  inactive
+}
+
+enum RoomType {
+  classe
+  laboratoire
+  informatique
+  bibliotheque
+  cantine
+  bureau
+  salle_reunion
+  gymnase
+  terrain
+  sanitaire
+  autre
+}

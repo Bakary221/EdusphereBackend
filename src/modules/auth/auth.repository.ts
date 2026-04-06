@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@database/prisma.service';
-import { PrismaClient, User, School, Session, UserRole, SchoolStatus } from '@prisma/client';
+import { User, School, Session, UserRole, SchoolStatus } from '@prisma/client';
 import { TenantDatabaseService } from '@database/tenant-database.service';
 import { TenantProvisioningService } from '@database/tenant-provisioning.service';
 import { ITenant } from '@common/interfaces/tenant.interface';
@@ -45,7 +45,7 @@ export class AuthRepository {
     private tenantProvisioningService: TenantProvisioningService,
   ) {}
 
-  private async resolvePrismaClient(tenant: ITenant | null): Promise<PrismaClient> {
+  private async resolvePrismaClient(tenant: ITenant | null): Promise<any> {
     if (tenant) {
       return this.tenantDatabaseService.getClientForTenant(tenant);
     }

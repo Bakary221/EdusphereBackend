@@ -27,7 +27,10 @@ export class TenantProvisioningService implements OnModuleInit, OnModuleDestroy 
       },
     });
 
-    const rawSchemaPath = this.config.get<string>('PRISMA_SCHEMA_PATH') ?? 'prisma/schema.prisma';
+    const rawSchemaPath =
+      this.config.get<string>('PRISMA_TENANT_SCHEMA_PATH') ??
+      this.config.get<string>('PRISMA_SCHEMA_PATH') ??
+      'prisma/tenant/schema.prisma';
     this.schemaPath = path.resolve(process.cwd(), rawSchemaPath);
     this.nameTemplate = this.config.get<string>('TENANT_DB_NAME_TEMPLATE') ?? 'edusphere_%s';
     const rawUrlTemplate = this.config.get<string>('TENANT_DB_URL_TEMPLATE')?.trim() ?? '';

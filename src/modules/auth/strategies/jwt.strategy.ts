@@ -3,7 +3,6 @@ import { PassportStrategy } from '@nestjs/passport';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@database/prisma.service';
-import { PrismaClient } from '@prisma/client';
 import { JwtPayload } from '../auth.service';
 import { TenantDatabaseService } from '@database/tenant-database.service';
 import { ITenant } from '@common/interfaces/tenant.interface';
@@ -24,7 +23,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   async validate(payload: JwtPayload) {
     let tenant: ITenant | null = null;
-    let prismaClient: PrismaClient = this.prisma;
+    let prismaClient: any = this.prisma;
 
     if (payload.schoolId) {
       const school = await this.prisma.school.findUnique({
