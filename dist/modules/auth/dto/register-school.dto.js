@@ -12,7 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.RegisterSchoolDto = void 0;
 const class_validator_1 = require("class-validator");
 const swagger_1 = require("@nestjs/swagger");
-const client_1 = require("@prisma/client");
+const school_types_1 = require("../../../common/constants/school-types");
 class RegisterSchoolDto {
 }
 exports.RegisterSchoolDto = RegisterSchoolDto;
@@ -30,29 +30,29 @@ __decorate([
     __metadata("design:type", String)
 ], RegisterSchoolDto.prototype, "slug", void 0);
 __decorate([
-    (0, swagger_1.ApiProperty)({ example: 'PRIVATE', enum: client_1.SchoolType, required: false }),
-    (0, class_validator_1.IsEnum)(client_1.SchoolType),
     (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: 'PRIVATE', enum: school_types_1.SCHOOL_TYPES }),
+    (0, class_validator_1.IsIn)(school_types_1.SCHOOL_TYPES, { message: "Le type d'école n'est pas valide" }),
     __metadata("design:type", String)
 ], RegisterSchoolDto.prototype, "type", void 0);
 __decorate([
-    (0, swagger_1.ApiProperty)({ example: 'free', required: false }),
-    (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: 'free' }),
+    (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], RegisterSchoolDto.prototype, "plan", void 0);
 __decorate([
-    (0, swagger_1.ApiProperty)({ example: 'contact@lycee-moderne.com', description: 'Email de contact école' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: 'contact@lycee-moderne.com', description: 'Email de contact école' }),
     (0, class_validator_1.IsEmail)({}, { message: 'L\'email de contact n\'est pas valide' }),
-    (0, class_validator_1.IsNotEmpty)({ message: 'L\'email de contact est obligatoire' }),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "contactEmail", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: 'admin@lycee-moderne.com', description: 'Email admin école' }),
+    (0, class_validator_1.IsEmail)({}, { message: 'L\'email renseigné n\'est pas valide' }),
     __metadata("design:type", String)
 ], RegisterSchoolDto.prototype, "email", void 0);
-__decorate([
-    (0, swagger_1.ApiProperty)({ example: 'admin@lycee-moderne.com', description: 'Email admin école' }),
-    (0, class_validator_1.IsEmail)({}, { message: 'L\'email admin n\'est pas valide' }),
-    (0, class_validator_1.IsNotEmpty)({ message: 'L\'email admin est obligatoire' }),
-    __metadata("design:type", String)
-], RegisterSchoolDto.prototype, "adminEmail", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)({ example: 'Admin' }),
     (0, class_validator_1.IsString)({ message: 'Le prénom de l\'admin doit être une chaîne de caractères' }),
@@ -65,4 +65,58 @@ __decorate([
     (0, class_validator_1.IsNotEmpty)({ message: 'Le nom de l\'admin est obligatoire' }),
     __metadata("design:type", String)
 ], RegisterSchoolDto.prototype, "adminLastName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: '+221 77 123 45 67' }),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "adminPhone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: 'Dakar' }),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "city", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: 'Sénégal' }),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "country", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: 'Avenue Cheikh Anta Diop' }),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "address", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: 'Une école tournée vers l’excellence.' }),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "description", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: 'https://res.cloudinary.com/.../logo.png' }),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "logo", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: '#3b82f6' }),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "brandingColor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: '#10b981' }),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "brandingSecondaryColor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, swagger_1.ApiPropertyOptional)({ example: 'Excellence académique pour tous' }),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], RegisterSchoolDto.prototype, "brandingSlogan", void 0);
 //# sourceMappingURL=register-school.dto.js.map

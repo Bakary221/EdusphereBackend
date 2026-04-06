@@ -1,8 +1,9 @@
 import { PrismaService } from '@database/prisma.service';
-import { User, School, Session, UserRole, SchoolStatus, SchoolType } from '@prisma/client';
+import { User, School, Session, UserRole, SchoolStatus } from '@prisma/client';
 import { TenantDatabaseService } from '@database/tenant-database.service';
 import { TenantProvisioningService } from '@database/tenant-provisioning.service';
 import { ITenant } from '@common/interfaces/tenant.interface';
+import { SchoolType } from '@common/constants/school-types';
 export interface CreateUserDto {
     email: string;
     passwordHash: string;
@@ -13,11 +14,22 @@ export interface CreateUserDto {
 export interface CreateSchoolWithAdminDto {
     name: string;
     slug: string;
-    email: string;
+    email?: string;
+    contactEmail?: string;
     adminEmail: string;
     adminPasswordHash: string;
     adminFirstName: string;
     adminLastName: string;
+    adminPhone?: string;
+    phone?: string;
+    city?: string;
+    country?: string;
+    address?: string;
+    description?: string;
+    logo?: string;
+    brandingColor?: string;
+    brandingSecondaryColor?: string;
+    brandingSlogan?: string;
     type?: SchoolType;
     plan?: string;
 }

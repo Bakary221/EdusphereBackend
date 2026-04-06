@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@database/prisma.service';
-import { PrismaClient, User, School, Session, UserRole, SchoolStatus, SchoolType } from '@prisma/client';
+import { PrismaClient, User, School, Session, UserRole, SchoolStatus } from '@prisma/client';
 import { TenantDatabaseService } from '@database/tenant-database.service';
 import { TenantProvisioningService } from '@database/tenant-provisioning.service';
 import { ITenant } from '@common/interfaces/tenant.interface';
+import { SchoolType } from '@common/constants/school-types';
 
 export interface CreateUserDto {
   email: string;
@@ -16,11 +17,22 @@ export interface CreateUserDto {
 export interface CreateSchoolWithAdminDto {
   name: string;
   slug: string;
-  email: string;
+  email?: string;
+  contactEmail?: string;
   adminEmail: string;
   adminPasswordHash: string;
   adminFirstName: string;
   adminLastName: string;
+  adminPhone?: string;
+  phone?: string;
+  city?: string;
+  country?: string;
+  address?: string;
+  description?: string;
+  logo?: string;
+  brandingColor?: string;
+  brandingSecondaryColor?: string;
+  brandingSlogan?: string;
   type?: SchoolType;
   plan?: string;
 }
@@ -81,16 +93,27 @@ export class AuthRepository {
     const databaseUrl = await this.tenantProvisioningService.ensureTenantDatabase(data.slug);
 
     return this.prisma.$transaction(async (tx) => {
+      const schoolData = {
+        name: data.name,
+        slug: data.slug,
+        email: data.contactEmail ?? data.email ?? data.adminEmail,
+        type: data.type ?? 'PRIVATE',
+        status: 'ACTIVE',
+        plan: data.plan ?? 'free',
+        databaseUrl,
+        phone: data.adminPhone ?? data.phone ?? null,
+        city: data.city ?? null,
+        country: data.country ?? null,
+        address: data.address ?? null,
+        description: data.description ?? null,
+        logo: data.logo ?? null,
+        brandingColor: data.brandingColor ?? null,
+        brandingSecondaryColor: data.brandingSecondaryColor ?? null,
+        brandingSlogan: data.brandingSlogan ?? null,
+      } as any;
+
       const school = await tx.school.create({
-        data: {
-          name: data.name,
-          slug: data.slug,
-          email: data.email,
-          type: data.type ?? 'PRIVATE',
-          status: 'ACTIVE',
-          plan: data.plan ?? 'free',
-          databaseUrl,
-        },
+        data: schoolData,
       });
 
       const tenant: ITenant = {
@@ -109,6 +132,7 @@ export class AuthRepository {
           passwordHash: data.adminPasswordHash,
           firstName: data.adminFirstName,
           lastName: data.adminLastName,
+          phone: data.adminPhone ?? data.phone ?? null,
           role: 'SCHOOL_ADMIN',
           isActive: true,
           emailVerified: true,

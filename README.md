@@ -22,3 +22,11 @@ npm run start:dev
 **API prête sur http://localhost:3000**
 
 *(Docker supprimé - DB locale)*
+
+## Variables d'environnement
+
+- `TWILIO_SENDGRID_API_KEY` pour l'envoi d'emails via Twilio SendGrid
+- `TWILIO_EMAIL_FROM` pour l'expéditeur email
+- `CLOUDINARY_CLOUD_NAME` pour activer Cloudinary, sinon le backend stocke les logos en local
+- `CLOUDINARY_API_KEY` pour activer Cloudinary, sinon le backend stocke les logos en local
+- `CLOUDINARY_API_SECRET` pour activer Cloudinary, sinon le backend stocke les logos en local

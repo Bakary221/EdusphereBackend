@@ -1,5 +1,27 @@
-import { Controller, Get, Post, Patch, Body, Req, Param, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiBody, ApiOkResponse, ApiParam, ApiOperation } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Req,
+  Param,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  ParseFilePipeBuilder,
+  HttpStatus,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiBody,
+  ApiOkResponse,
+  ApiParam,
+  ApiOperation,
+  ApiConsumes,
+} from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
 import { RolesGuard } from '@common/guards/roles.guard';
 import { Roles } from '@common/decorators/roles.decorator';
@@ -10,6 +32,7 @@ import { UpdateSchoolStatusDto } from './dto/update-school-status.dto';
 import { UpdateSchoolAdminStatusDto } from './dto/update-school-admin-status.dto';
 import { getSuccessMessage } from '@common/utils/messages.util';
 import { SuccessMessage } from '@common/enums/success-messages.enum';
+import { CloudinaryUploadFile } from '@common/cloudinary/cloudinary.service';
 import { Request } from 'express';
 
 @ApiTags('Super Admin')
@@ -57,6 +80,59 @@ export class SuperAdminController {
         login: '/auth/login',
       },
     };
+  }
+
+  @Post('uploads/school-logo')
+  @ApiOperation({ summary: 'Téléverser le logo d\'une école' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+      },
+    }),
+  )
+  async uploadSchoolLogo(
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({ fileType: /^image\/(jpe?g|png|webp|gif|svg\+xml)$/i })
+        .addMaxSizeValidator({ maxSize: 5 * 1024 * 1024 })
+        .build({
+          fileIsRequired: true,
+          errorHttpStatusCode: HttpStatus.BAD_REQUEST,
+        }),
+    )
+    file: CloudinaryUploadFile,
+    @Req() req: Request,
+  ) {
+    const logo = await this.service.uploadSchoolLogo(file, this.getBaseUrl(req));
+    return {
+      data: logo,
+      _links: {
+        self: req.originalUrl,
+      },
+    };
+  }
+
+  private getBaseUrl(req: Request): string {
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    const forwardedValue = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
+    const protocol =
+      typeof forwardedValue === 'string' && forwardedValue.trim().length > 0
+        ? forwardedValue.split(',')[0].trim()
+        : req.protocol;
+    return `${protocol}://${req.get('host') || 'localhost:3000'}`;
   }
 
   @Patch('schools/:id/status')

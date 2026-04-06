@@ -8,6 +8,7 @@ import { PrismaModule } from '@database/prisma.module';
 import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { RolesGuard } from '@common/guards/roles.guard';
+import { EmailModule } from '@common/email/email.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { RolesGuard } from '@common/guards/roles.guard';
       }),
     }),
     PrismaModule,
+    EmailModule,
   ],
   controllers: [AuthController],
   providers: [

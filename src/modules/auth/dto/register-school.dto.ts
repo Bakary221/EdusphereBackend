@@ -1,6 +1,6 @@
-import { IsEmail, IsString, IsNotEmpty, Length, IsEnum, IsOptional } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
-import { SchoolType } from '@prisma/client';
+import { IsEmail, IsString, IsNotEmpty, Length, IsIn, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { SCHOOL_TYPES, SchoolType } from '@common/constants/school-types';
 
 export class RegisterSchoolDto {
   @ApiProperty({ example: 'Lycée Moderne', description: "Nom de l'ecole" })
@@ -14,25 +14,25 @@ export class RegisterSchoolDto {
   @IsNotEmpty({ message: 'Le slug est obligatoire' })
   slug: string;
 
-  @ApiProperty({ example: 'PRIVATE', enum: SchoolType, required: false })
-  @IsEnum(SchoolType)
   @IsOptional()
+  @ApiPropertyOptional({ example: 'PRIVATE', enum: SCHOOL_TYPES })
+  @IsIn(SCHOOL_TYPES, { message: "Le type d'école n'est pas valide" })
   type?: SchoolType;
 
-  @ApiProperty({ example: 'free', required: false })
-  @IsString()
   @IsOptional()
+  @ApiPropertyOptional({ example: 'free' })
+  @IsString()
   plan?: string;
 
-  @ApiProperty({ example: 'contact@lycee-moderne.com', description: 'Email de contact école' })
+  @IsOptional()
+  @ApiPropertyOptional({ example: 'contact@lycee-moderne.com', description: 'Email de contact école' })
   @IsEmail({}, { message: 'L\'email de contact n\'est pas valide' })
-  @IsNotEmpty({ message: 'L\'email de contact est obligatoire' })
-  email: string;
+  contactEmail?: string;
 
-  @ApiProperty({ example: 'admin@lycee-moderne.com', description: 'Email admin école' })
-  @IsEmail({}, { message: 'L\'email admin n\'est pas valide' })
-  @IsNotEmpty({ message: 'L\'email admin est obligatoire' })
-  adminEmail: string;
+  @IsOptional()
+  @ApiPropertyOptional({ example: 'admin@lycee-moderne.com', description: 'Email admin école' })
+  @IsEmail({}, { message: 'L\'email renseigné n\'est pas valide' })
+  email?: string;
 
   @ApiProperty({ example: 'Admin' })
   @IsString({ message: 'Le prénom de l\'admin doit être une chaîne de caractères' })
@@ -43,5 +43,50 @@ export class RegisterSchoolDto {
   @IsString({ message: 'Le nom de l\'admin doit être une chaîne de caractères' })
   @IsNotEmpty({ message: 'Le nom de l\'admin est obligatoire' })
   adminLastName: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({ example: '+221 77 123 45 67' })
+  @IsString()
+  adminPhone?: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({ example: 'Dakar' })
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({ example: 'Sénégal' })
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({ example: 'Avenue Cheikh Anta Diop' })
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({ example: 'Une école tournée vers l’excellence.' })
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({ example: 'https://res.cloudinary.com/.../logo.png' })
+  @IsString()
+  logo?: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({ example: '#3b82f6' })
+  @IsString()
+  brandingColor?: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({ example: '#10b981' })
+  @IsString()
+  brandingSecondaryColor?: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({ example: 'Excellence académique pour tous' })
+  @IsString()
+  brandingSlogan?: string;
 
 }

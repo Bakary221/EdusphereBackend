@@ -1,4 +1,5 @@
-import { SchoolStatus, SchoolType } from '@prisma/client';
+import { SchoolStatus } from '@prisma/client';
+import { SchoolType } from '@common/constants/school-types';
 
 export type NormalizedSchoolStatus = Lowercase<SchoolStatus>;
 export type NormalizedSchoolType =

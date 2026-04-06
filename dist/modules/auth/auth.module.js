@@ -17,6 +17,7 @@ const prisma_module_1 = require("../../database/prisma.module");
 const local_strategy_1 = require("./strategies/local.strategy");
 const jwt_strategy_1 = require("./strategies/jwt.strategy");
 const roles_guard_1 = require("../../common/guards/roles.guard");
+const email_module_1 = require("../../common/email/email.module");
 let AuthModule = class AuthModule {
 };
 exports.AuthModule = AuthModule;
@@ -31,6 +32,7 @@ exports.AuthModule = AuthModule = __decorate([
                 }),
             }),
             prisma_module_1.PrismaModule,
+            email_module_1.EmailModule,
         ],
         controllers: [auth_controller_1.AuthController],
         providers: [

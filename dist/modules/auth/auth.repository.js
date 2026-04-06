@@ -56,16 +56,26 @@ let AuthRepository = class AuthRepository {
     async createSchoolWithAdmin(data) {
         const databaseUrl = await this.tenantProvisioningService.ensureTenantDatabase(data.slug);
         return this.prisma.$transaction(async (tx) => {
+            const schoolData = {
+                name: data.name,
+                slug: data.slug,
+                email: data.contactEmail ?? data.email ?? data.adminEmail,
+                type: data.type ?? 'PRIVATE',
+                status: 'ACTIVE',
+                plan: data.plan ?? 'free',
+                databaseUrl,
+                phone: data.adminPhone ?? data.phone ?? null,
+                city: data.city ?? null,
+                country: data.country ?? null,
+                address: data.address ?? null,
+                description: data.description ?? null,
+                logo: data.logo ?? null,
+                brandingColor: data.brandingColor ?? null,
+                brandingSecondaryColor: data.brandingSecondaryColor ?? null,
+                brandingSlogan: data.brandingSlogan ?? null,
+            };
             const school = await tx.school.create({
-                data: {
-                    name: data.name,
-                    slug: data.slug,
-                    email: data.email,
-                    type: data.type ?? 'PRIVATE',
-                    status: 'ACTIVE',
-                    plan: data.plan ?? 'free',
-                    databaseUrl,
-                },
+                data: schoolData,
             });
             const tenant = {
                 id: school.id,
@@ -82,6 +92,7 @@ let AuthRepository = class AuthRepository {
                     passwordHash: data.adminPasswordHash,
                     firstName: data.adminFirstName,
                     lastName: data.adminLastName,
+                    phone: data.adminPhone ?? data.phone ?? null,
                     role: 'SCHOOL_ADMIN',
                     isActive: true,
                     emailVerified: true,

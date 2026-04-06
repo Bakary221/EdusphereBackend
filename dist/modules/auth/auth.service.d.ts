@@ -5,6 +5,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterSchoolDto } from './dto/register-school.dto';
 import { UserRole } from '@prisma/client';
 import { ITenant } from '@common/interfaces/tenant.interface';
+import { EmailService } from '@common/email/email.service';
 export interface JwtPayload {
     sub: string;
     email: string;
@@ -27,7 +28,9 @@ export declare class AuthService {
     private authRepository;
     private jwtService;
     private configService;
-    constructor(authRepository: AuthRepository, jwtService: JwtService, configService: ConfigService);
+    private emailService;
+    private readonly logger;
+    constructor(authRepository: AuthRepository, jwtService: JwtService, configService: ConfigService, emailService: EmailService);
     login(loginDto: LoginDto, ipAddress: string, tenant: ITenant | null): Promise<AuthResponse>;
     registerSchool(dto: RegisterSchoolDto): Promise<{
         school: any;

@@ -2,9 +2,11 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AuthService } from '@modules/auth/auth.service';
 import { AuthRepository } from '@modules/auth/auth.repository';
 import { RegisterSchoolDto } from '@modules/auth/dto/register-school.dto';
-import { Prisma, School, SchoolStatus, SchoolType, UserRole } from '@prisma/client';
+import { Prisma, School, SchoolStatus, UserRole } from '@prisma/client';
 import { TenantDatabaseService } from '@database/tenant-database.service';
 import { ITenant } from '@common/interfaces/tenant.interface';
+import { SchoolType } from '@common/constants/school-types';
+import { CloudinaryService, CloudinaryUploadFile } from '@common/cloudinary/cloudinary.service';
 import {
   PlatformStatsDto,
   PlatformSchoolSummary,
@@ -35,6 +37,7 @@ export class SuperAdminService {
     private readonly authService: AuthService,
     private readonly authRepository: AuthRepository,
     private readonly tenantDatabaseService: TenantDatabaseService,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   listSchools() {
@@ -43,6 +46,11 @@ export class SuperAdminService {
 
   createSchool(dto: RegisterSchoolDto) {
     return this.authService.registerSchool(dto);
+  }
+
+  async uploadSchoolLogo(file: CloudinaryUploadFile, baseUrl?: string): Promise<{ url: string }> {
+    const url = await this.cloudinaryService.uploadSchoolLogo(file, baseUrl);
+    return { url };
   }
 
   updateSchoolStatus(id: string, status: SchoolStatus) {

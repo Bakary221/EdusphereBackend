@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   ConflictException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ErrorCode } from '@common/enums/error-codes.enum';
@@ -14,6 +15,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterSchoolDto } from './dto/register-school.dto';
 import { UserRole } from '@prisma/client';
 import { ITenant } from '@common/interfaces/tenant.interface';
+import { EmailService } from '@common/email/email.service';
 
 export interface JwtPayload {
   sub: string;
@@ -37,10 +39,12 @@ export interface AuthResponse {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   constructor(
     private authRepository: AuthRepository,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private emailService: EmailService,
   ) {}
 
   /**
@@ -136,11 +140,35 @@ async login(loginDto: LoginDto, ipAddress: string, tenant: ITenant | null): Prom
       this.configService.get<string>('TENANT_ADMIN_TEMP_PASSWORD') ??
       'Password123!';
     const hashedPassword = await bcrypt.hash(adminTempPassword, 12);
+    const adminEmail = dto.email ?? dto.contactEmail;
 
-    return this.authRepository.createSchoolWithAdmin({
+    if (!adminEmail) {
+      throw new ConflictException({
+        code: ErrorCode.AUTH_INVALID_CREDENTIALS,
+        message: 'L\'email de contact de l\'école est obligatoire.',
+      });
+    }
+
+    const result = await this.authRepository.createSchoolWithAdmin({
       ...dto,
+      adminEmail,
       adminPasswordHash: hashedPassword,
     });
+
+    try {
+      await this.emailService.sendTenantAdminInvitation({
+        to: adminEmail,
+        firstName: dto.adminFirstName,
+        schoolName: dto.name,
+        tenantSlug: dto.slug,
+        login: adminEmail,
+        password: adminTempPassword,
+      });
+    } catch (error) {
+      this.logger.warn('Failed to send school admin invite', error as Error);
+    }
+
+    return result;
   }
 
   async refreshToken(refreshToken: string): Promise<AuthResponse> {

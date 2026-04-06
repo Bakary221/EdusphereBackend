@@ -41,6 +41,7 @@ var __importStar = (this && this.__importStar) || (function () {
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var AuthService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
 const common_1 = require("@nestjs/common");
@@ -51,11 +52,14 @@ const jwt_1 = require("@nestjs/jwt");
 const bcrypt = __importStar(require("bcrypt"));
 const auth_repository_1 = require("./auth.repository");
 const client_1 = require("@prisma/client");
-let AuthService = class AuthService {
-    constructor(authRepository, jwtService, configService) {
+const email_service_1 = require("../../common/email/email.service");
+let AuthService = AuthService_1 = class AuthService {
+    constructor(authRepository, jwtService, configService, emailService) {
         this.authRepository = authRepository;
         this.jwtService = jwtService;
         this.configService = configService;
+        this.emailService = emailService;
+        this.logger = new common_1.Logger(AuthService_1.name);
     }
     async login(loginDto, ipAddress, tenant) {
         console.log('🔍 [LOGIN] Email:', loginDto.email, 'Tenant:', tenant?.slug ?? 'global', 'IP:', ipAddress);
@@ -124,10 +128,32 @@ let AuthService = class AuthService {
         const adminTempPassword = this.configService.get('TENANT_ADMIN_TEMP_PASSWORD') ??
             'Password123!';
         const hashedPassword = await bcrypt.hash(adminTempPassword, 12);
-        return this.authRepository.createSchoolWithAdmin({
+        const adminEmail = dto.email ?? dto.contactEmail;
+        if (!adminEmail) {
+            throw new common_1.ConflictException({
+                code: error_codes_enum_1.ErrorCode.AUTH_INVALID_CREDENTIALS,
+                message: 'L\'email de contact de l\'école est obligatoire.',
+            });
+        }
+        const result = await this.authRepository.createSchoolWithAdmin({
             ...dto,
+            adminEmail,
             adminPasswordHash: hashedPassword,
         });
+        try {
+            await this.emailService.sendTenantAdminInvitation({
+                to: adminEmail,
+                firstName: dto.adminFirstName,
+                schoolName: dto.name,
+                tenantSlug: dto.slug,
+                login: adminEmail,
+                password: adminTempPassword,
+            });
+        }
+        catch (error) {
+            this.logger.warn('Failed to send school admin invite', error);
+        }
+        return result;
     }
     async refreshToken(refreshToken) {
         let payload;
@@ -198,10 +224,11 @@ let AuthService = class AuthService {
     }
 };
 exports.AuthService = AuthService;
-exports.AuthService = AuthService = __decorate([
+exports.AuthService = AuthService = AuthService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [auth_repository_1.AuthRepository,
         jwt_1.JwtService,
-        config_1.ConfigService])
+        config_1.ConfigService,
+        email_service_1.EmailService])
 ], AuthService);
 //# sourceMappingURL=auth.service.js.map
