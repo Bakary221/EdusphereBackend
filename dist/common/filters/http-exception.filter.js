@@ -10,6 +10,40 @@ exports.HttpExceptionFilter = void 0;
 const common_1 = require("@nestjs/common");
 const error_codes_enum_1 = require("../enums/error-codes.enum");
 const error_messages_1 = require("../i18n/error-messages");
+const isPrismaErrorLike = (value) => {
+    return !!value && typeof value === 'object' && 'code' in value && typeof value.code === 'string';
+};
+const getPrismaUniqueConstraintMessage = (target, locale) => {
+    const normalizedTarget = target.map((field) => field.toLowerCase());
+    if (normalizedTarget.includes('email')) {
+        return locale === 'fr'
+            ? 'Cette adresse e-mail existe déjà.'
+            : 'This email address already exists.';
+    }
+    if (normalizedTarget.includes('slug')) {
+        return locale === 'fr'
+            ? 'Ce slug existe déjà.'
+            : 'This slug already exists.';
+    }
+    if (normalizedTarget.includes('code')) {
+        return locale === 'fr'
+            ? 'Ce code existe déjà.'
+            : 'This code already exists.';
+    }
+    if (normalizedTarget.includes('name')) {
+        return locale === 'fr'
+            ? 'Un élément avec ce nom existe déjà.'
+            : 'An item with this name already exists.';
+    }
+    if (normalizedTarget.includes('token')) {
+        return locale === 'fr'
+            ? 'Ce jeton existe déjà.'
+            : 'This token already exists.';
+    }
+    return locale === 'fr'
+        ? 'Un élément avec ces valeurs existe déjà.'
+        : 'An item with these values already exists.';
+};
 let HttpExceptionFilter = class HttpExceptionFilter {
     catch(exception, host) {
         const ctx = host.switchToHttp();
@@ -21,7 +55,31 @@ let HttpExceptionFilter = class HttpExceptionFilter {
         let code = error_codes_enum_1.ErrorCode.INTERNAL_ERROR;
         let message = error_messages_1.ErrorMessages[error_codes_enum_1.ErrorCode.INTERNAL_ERROR][locale];
         let details = [];
-        if (exception instanceof common_1.HttpException) {
+        if (isPrismaErrorLike(exception)) {
+            const target = Array.isArray(exception.meta?.target)
+                ? exception.meta.target.filter((item) => typeof item === 'string')
+                : [];
+            if (exception.code === 'P2002') {
+                status = common_1.HttpStatus.CONFLICT;
+                code = error_codes_enum_1.ErrorCode.CONFLICT;
+                message = getPrismaUniqueConstraintMessage(target, locale);
+                details = target.length > 0 ? [`Champs concernés : ${target.join(', ')}`] : [];
+            }
+            else if (exception.code === 'P2025') {
+                status = common_1.HttpStatus.NOT_FOUND;
+                code = error_codes_enum_1.ErrorCode.NOT_FOUND;
+                message = error_messages_1.ErrorMessages[error_codes_enum_1.ErrorCode.NOT_FOUND][locale];
+            }
+            else if (exception.code === 'P2003') {
+                status = common_1.HttpStatus.BAD_REQUEST;
+                code = error_codes_enum_1.ErrorCode.BAD_REQUEST;
+                message =
+                    locale === 'fr'
+                        ? 'La référence liée est invalide.'
+                        : 'The related reference is invalid.';
+            }
+        }
+        else if (exception instanceof common_1.HttpException) {
             status = exception.getStatus();
             const exceptionResponse = exception.getResponse();
             if (typeof exceptionResponse === 'object' && exceptionResponse.code) {

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@database/prisma.service';
-import { User, School, Session, UserRole, SchoolStatus } from '@prisma/client';
+import { Prisma, User, School, Session, UserRole, SchoolStatus } from '@prisma/client';
 import { TenantDatabaseService } from '@database/tenant-database.service';
 import { TenantProvisioningService } from '@database/tenant-provisioning.service';
 import { ITenant } from '@common/interfaces/tenant.interface';
@@ -52,18 +52,43 @@ export class AuthRepository {
     return this.prisma;
   }
 
+  private isSchemaMismatchError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === 'P2021' || error.code === 'P2022')
+    );
+  }
+
+  private async withTenantSchemaRepair<T>(
+    tenant: ITenant | null,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!tenant || !this.isSchemaMismatchError(error)) {
+        throw error;
+      }
+
+      await this.tenantProvisioningService.syncTenantSchema(tenant.databaseUrl, tenant.slug);
+      return operation();
+    }
+  }
+
   async findUserByEmail(email: string, tenant?: ITenant | null): Promise<User | null> {
     const prisma = await this.resolvePrismaClient(tenant);
-    return prisma.user.findFirst({
-      where: { 
-        email,
-      },
-    });
+    return this.withTenantSchemaRepair(tenant ?? null, () =>
+      prisma.user.findFirst({
+        where: {
+          email,
+        },
+      }),
+    );
   }
 
   async findUserById(id: string, tenant?: ITenant | null): Promise<User | null> {
     const prisma = await this.resolvePrismaClient(tenant);
-    return prisma.user.findUnique({ where: { id } });
+    return this.withTenantSchemaRepair(tenant ?? null, () => prisma.user.findUnique({ where: { id } }));
   }
 
   /** Cherche une école par son slug unique. Utilisé par registerSchool() et le TenantMiddleware. */
@@ -145,7 +170,9 @@ export class AuthRepository {
 
   async findSessionByRefreshToken(token: string, tenant: ITenant | null): Promise<Session | null> {
     const prisma = await this.resolvePrismaClient(tenant);
-    return prisma.session.findUnique({ where: { refreshToken: token } });
+    return this.withTenantSchemaRepair(tenant, () =>
+      prisma.session.findUnique({ where: { refreshToken: token } }),
+    );
   }
 
   async createSession(
@@ -160,17 +187,17 @@ export class AuthRepository {
     tenant: ITenant | null,
   ): Promise<Session> {
     const prisma = await this.resolvePrismaClient(tenant);
-    return prisma.session.create({ data });
+    return this.withTenantSchemaRepair(tenant, () => prisma.session.create({ data }));
   }
 
   async deleteSessionById(id: string, tenant: ITenant | null): Promise<Session> {
     const prisma = await this.resolvePrismaClient(tenant);
-    return prisma.session.delete({ where: { id } });
+    return this.withTenantSchemaRepair(tenant, () => prisma.session.delete({ where: { id } }));
   }
 
   async deleteUserSessions(userId: string, tenant: ITenant | null): Promise<void> {
     const prisma = await this.resolvePrismaClient(tenant);
-    await prisma.session.deleteMany({ where: { userId } });
+    await this.withTenantSchemaRepair(tenant, () => prisma.session.deleteMany({ where: { userId } }));
   }
 
   async listSchools(): Promise<School[]> {

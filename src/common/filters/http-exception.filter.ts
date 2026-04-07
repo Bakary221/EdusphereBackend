@@ -6,9 +6,59 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Response } from 'express';
+import type { Request } from 'express';
 import { ErrorResponse } from '../dtos/response.dto';
 import { ErrorCode } from '../enums/error-codes.enum';
 import { ErrorMessages } from '../i18n/error-messages';
+
+type PrismaErrorLike = {
+  code?: string;
+  meta?: {
+    target?: unknown;
+  };
+};
+
+const isPrismaErrorLike = (value: unknown): value is PrismaErrorLike => {
+  return !!value && typeof value === 'object' && 'code' in value && typeof (value as { code?: unknown }).code === 'string';
+};
+
+const getPrismaUniqueConstraintMessage = (target: string[], locale: 'fr' | 'en'): string => {
+  const normalizedTarget = target.map((field) => field.toLowerCase());
+
+  if (normalizedTarget.includes('email')) {
+    return locale === 'fr'
+      ? 'Cette adresse e-mail existe déjà.'
+      : 'This email address already exists.';
+  }
+
+  if (normalizedTarget.includes('slug')) {
+    return locale === 'fr'
+      ? 'Ce slug existe déjà.'
+      : 'This slug already exists.';
+  }
+
+  if (normalizedTarget.includes('code')) {
+    return locale === 'fr'
+      ? 'Ce code existe déjà.'
+      : 'This code already exists.';
+  }
+
+  if (normalizedTarget.includes('name')) {
+    return locale === 'fr'
+      ? 'Un élément avec ce nom existe déjà.'
+      : 'An item with this name already exists.';
+  }
+
+  if (normalizedTarget.includes('token')) {
+    return locale === 'fr'
+      ? 'Ce jeton existe déjà.'
+      : 'This token already exists.';
+  }
+
+  return locale === 'fr'
+    ? 'Un élément avec ces valeurs existe déjà.'
+    : 'An item with these values already exists.';
+};
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -25,7 +75,29 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let message = ErrorMessages[ErrorCode.INTERNAL_ERROR][locale];
     let details: string[] = [];
 
-    if (exception instanceof HttpException) {
+    if (isPrismaErrorLike(exception)) {
+      const target = Array.isArray(exception.meta?.target)
+        ? exception.meta.target.filter((item): item is string => typeof item === 'string')
+        : [];
+
+      if (exception.code === 'P2002') {
+        status = HttpStatus.CONFLICT;
+        code = ErrorCode.CONFLICT;
+        message = getPrismaUniqueConstraintMessage(target, locale);
+        details = target.length > 0 ? [`Champs concernés : ${target.join(', ')}`] : [];
+      } else if (exception.code === 'P2025') {
+        status = HttpStatus.NOT_FOUND;
+        code = ErrorCode.NOT_FOUND;
+        message = ErrorMessages[ErrorCode.NOT_FOUND][locale];
+      } else if (exception.code === 'P2003') {
+        status = HttpStatus.BAD_REQUEST;
+        code = ErrorCode.BAD_REQUEST;
+        message =
+          locale === 'fr'
+            ? 'La référence liée est invalide.'
+            : 'The related reference is invalid.';
+      }
+    } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       
       const exceptionResponse = exception.getResponse();
@@ -56,7 +128,3 @@ export class HttpExceptionFilter implements ExceptionFilter {
     response.status(status).json(errorResponse);
   }
 }
-
-import type { Request } from 'express';
-
-

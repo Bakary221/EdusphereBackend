@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { TenantDatabaseService } from '@database/tenant-database.service';
+import { TenantProvisioningService } from '@database/tenant-provisioning.service';
 import { ITenant } from '@common/interfaces/tenant.interface';
 import { CreateBuildingDto } from './dto/create-building.dto';
 import { UpdateBuildingDto } from './dto/update-building.dto';
@@ -113,397 +114,459 @@ export interface InfrastructureStats {
 
 @Injectable()
 export class InfrastructureService {
-  constructor(private readonly tenantDatabaseService: TenantDatabaseService) {}
+  constructor(
+    private readonly tenantDatabaseService: TenantDatabaseService,
+    private readonly tenantProvisioningService: TenantProvisioningService,
+  ) {}
+
+  private async withSchemaRepair<T>(
+    tenant: ITenant | null,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!tenant || !this.isSchemaMismatchError(error)) {
+        throw error;
+      }
+
+      await this.tenantProvisioningService.syncTenantSchema(tenant.databaseUrl, tenant.slug);
+      return operation();
+    }
+  }
+
+  private isSchemaMismatchError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+      return false;
+    }
+
+    if (error.code === 'P2021' || error.code === 'P2022') {
+      return true;
+    }
+
+    if (error.code === 'P2010') {
+      const meta = error.meta as { code?: unknown; message?: unknown } | undefined;
+      const dbCode = typeof meta?.code === 'string' ? meta.code : '';
+      const message = typeof meta?.message === 'string' ? meta.message : '';
+      return dbCode === '42P01' || /relation .* does not exist/i.test(message) || /table .* does not exist/i.test(message);
+    }
+
+    return false;
+  }
 
   async getStats(tenant: ITenant | null): Promise<InfrastructureStats> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
 
-    const [buildingRows, roomRows] = await Promise.all([
-      client.$queryRaw<Array<{ total: number | bigint }>>(Prisma.sql`
-        SELECT COUNT(*)::int AS total
-        FROM "Building"
-        WHERE "schoolId" = ${schoolId}
-      `),
-      client.$queryRaw<Pick<RoomMetricsRow, 'status' | 'capacity'>[]>(Prisma.sql`
-        SELECT status, capacity
-        FROM "Room"
-        WHERE "schoolId" = ${schoolId}
-      `),
-    ]);
+      const [buildingRows, roomRows] = await Promise.all([
+        client.$queryRaw<Array<{ total: number | bigint }>>(Prisma.sql`
+          SELECT COUNT(*)::int AS total
+          FROM "Building"
+          WHERE "schoolId" = ${schoolId}
+        `),
+        client.$queryRaw<Pick<RoomMetricsRow, 'status' | 'capacity'>[]>(Prisma.sql`
+          SELECT status, capacity
+          FROM "Room"
+          WHERE "schoolId" = ${schoolId}
+        `),
+      ]);
 
-    const totalBuildings = Number(buildingRows[0]?.total ?? 0);
-    const totalRooms = roomRows.length;
-    const activeRooms = roomRows.filter((room) => room.status === BuildingStatusEnum.active).length;
-    const maintenanceRooms = roomRows.filter((room) => room.status === BuildingStatusEnum.maintenance).length;
-    const inactiveRooms = roomRows.filter((room) => room.status === BuildingStatusEnum.inactive).length;
-    const totalCapacity = roomRows.reduce((sum, room) => sum + Number(room.capacity ?? 0), 0);
+      const totalBuildings = Number(buildingRows[0]?.total ?? 0);
+      const totalRooms = roomRows.length;
+      const activeRooms = roomRows.filter((room) => room.status === RoomStatusEnum.active).length;
+      const maintenanceRooms = roomRows.filter((room) => room.status === RoomStatusEnum.maintenance).length;
+      const inactiveRooms = roomRows.filter((room) => room.status === RoomStatusEnum.inactive).length;
+      const totalCapacity = roomRows.reduce((sum, room) => sum + Number(room.capacity ?? 0), 0);
 
-    return {
-      totalBuildings,
-      totalRooms,
-      activeRooms,
-      maintenanceRooms,
-      inactiveRooms,
-      totalCapacity,
-      occupancyRate: totalRooms > 0 ? Math.round((activeRooms / totalRooms) * 100) : 0,
-    };
+      return {
+        totalBuildings,
+        totalRooms,
+        activeRooms,
+        maintenanceRooms,
+        inactiveRooms,
+        totalCapacity,
+        occupancyRate: totalRooms > 0 ? Math.round((activeRooms / totalRooms) * 100) : 0,
+      };
+    });
   }
 
   async listBuildings(tenant: ITenant | null, query: ListBuildingsQueryDto): Promise<BuildingSummary[]> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
 
-    const where = this.buildBuildingWhereClause(schoolId, query);
-    const [buildings, roomMetrics] = await Promise.all([
-      client.$queryRaw<BuildingRow[]>(Prisma.sql`
-        SELECT
-          b."id",
-          b."schoolId",
-          b."name",
-          b."description",
-          b."floorCount",
-          b."status",
-          b."createdAt",
-          b."updatedAt"
-        FROM "Building" b
-        ${where}
-        ORDER BY b."createdAt" DESC
-      `),
-      client.$queryRaw<RoomMetricsRow[]>(Prisma.sql`
-        SELECT
-          r."buildingId",
-          r.status,
-          r.capacity,
-          r."roomType"
-        FROM "Room" r
-        WHERE r."schoolId" = ${schoolId}
-      `),
-    ]);
+      const where = this.buildBuildingWhereClause(schoolId, query);
+      const [buildings, roomMetrics] = await Promise.all([
+        client.$queryRaw<BuildingRow[]>(Prisma.sql`
+          SELECT
+            b."id",
+            b."schoolId",
+            b."name",
+            b."description",
+            b."floorCount",
+            b."status",
+            b."createdAt",
+            b."updatedAt"
+          FROM "Building" b
+          ${where}
+          ORDER BY b."createdAt" DESC
+        `),
+        client.$queryRaw<RoomMetricsRow[]>(Prisma.sql`
+          SELECT
+            r."buildingId",
+            r.status,
+            r.capacity,
+            r."roomType"
+          FROM "Room" r
+          WHERE r."schoolId" = ${schoolId}
+        `),
+      ]);
 
-    const metricsByBuilding = this.groupRoomMetricsByBuilding(roomMetrics);
-    return buildings.map((building) =>
-      this.mapBuildingSummary(building, metricsByBuilding.get(building.id) ?? []),
-    );
+      const metricsByBuilding = this.groupRoomMetricsByBuilding(roomMetrics);
+      return buildings.map((building) =>
+        this.mapBuildingSummary(building, metricsByBuilding.get(building.id) ?? []),
+      );
+    });
   }
 
   async getBuildingById(tenant: ITenant | null, id: string): Promise<BuildingHierarchyItem> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const building = await this.getBuildingRowById(client, schoolId, id);
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const building = await this.getBuildingRowById(client, schoolId, id);
 
-    if (!building) {
-      throw new NotFoundException('Bâtiment introuvable');
-    }
+      if (!building) {
+        throw new NotFoundException('Bâtiment introuvable');
+      }
 
-    const rooms = await this.getRoomRowsForBuilding(client, schoolId, id);
-    const summary = this.mapBuildingSummary(building, rooms);
+      const rooms = await this.getRoomRowsForBuilding(client, schoolId, id);
+      const summary = this.mapBuildingSummary(building, rooms);
 
-    return {
-      ...summary,
-      rooms: rooms.map((room) => this.mapRoomSummary(room)),
-    };
+      return {
+        ...summary,
+        rooms: rooms.map((room) => this.mapRoomSummary(room)),
+      };
+    });
   }
 
   async createBuilding(tenant: ITenant | null, dto: CreateBuildingDto): Promise<BuildingSummary> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const id = randomUUID();
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const id = randomUUID();
 
-    await client.$executeRaw(Prisma.sql`
-      INSERT INTO "Building" (
-        "id",
-        "schoolId",
-        "name",
-        "description",
-        "floorCount",
-        "status",
-        "createdAt",
-        "updatedAt"
-      ) VALUES (
-        ${id},
-        ${schoolId},
-        ${dto.name.trim()},
-        ${dto.description?.trim() || null},
-        ${dto.floorCount ?? 1},
-        ${dto.status ?? BuildingStatusEnum.active}::"BuildingStatus",
-        CURRENT_TIMESTAMP,
-        CURRENT_TIMESTAMP
-      )
-    `);
+      await client.$executeRaw(Prisma.sql`
+        INSERT INTO "Building" (
+          "id",
+          "schoolId",
+          "name",
+          "description",
+          "floorCount",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ) VALUES (
+          ${id},
+          ${schoolId},
+          ${dto.name.trim()},
+          ${dto.description?.trim() || null},
+          ${dto.floorCount ?? 1},
+          ${dto.status ?? BuildingStatusEnum.active}::"BuildingStatus",
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        )
+      `);
 
-    const building = await this.getBuildingRowById(client, schoolId, id);
-    if (!building) {
-      throw new NotFoundException('Bâtiment introuvable');
-    }
+      const building = await this.getBuildingRowById(client, schoolId, id);
+      if (!building) {
+        throw new NotFoundException('Bâtiment introuvable');
+      }
 
-    return this.mapBuildingSummary(building, []);
+      return this.mapBuildingSummary(building, []);
+    });
   }
 
   async updateBuilding(tenant: ITenant | null, id: string, dto: UpdateBuildingDto): Promise<BuildingSummary> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const existing = await this.getBuildingRowById(client, schoolId, id);
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const existing = await this.getBuildingRowById(client, schoolId, id);
 
-    if (!existing) {
-      throw new NotFoundException('Bâtiment introuvable');
-    }
+      if (!existing) {
+        throw new NotFoundException('Bâtiment introuvable');
+      }
 
-    const updates: Prisma.Sql[] = [];
-    if (dto.name !== undefined) {
-      updates.push(Prisma.sql`"name" = ${dto.name.trim()}`);
-    }
-    if (dto.description !== undefined) {
-      updates.push(Prisma.sql`"description" = ${dto.description?.trim() || null}`);
-    }
-    if (dto.floorCount !== undefined) {
-      updates.push(Prisma.sql`"floorCount" = ${dto.floorCount}`);
-    }
-    if (dto.status !== undefined) {
-      updates.push(Prisma.sql`"status" = ${dto.status}::"BuildingStatus"`);
-    }
-    updates.push(Prisma.sql`"updatedAt" = CURRENT_TIMESTAMP`);
+      const updates: Prisma.Sql[] = [];
+      if (dto.name !== undefined) {
+        updates.push(Prisma.sql`"name" = ${dto.name.trim()}`);
+      }
+      if (dto.description !== undefined) {
+        updates.push(Prisma.sql`"description" = ${dto.description?.trim() || null}`);
+      }
+      if (dto.floorCount !== undefined) {
+        updates.push(Prisma.sql`"floorCount" = ${dto.floorCount}`);
+      }
+      if (dto.status !== undefined) {
+        updates.push(Prisma.sql`"status" = ${dto.status}::"BuildingStatus"`);
+      }
+      updates.push(Prisma.sql`"updatedAt" = CURRENT_TIMESTAMP`);
 
-    await client.$executeRaw(Prisma.sql`
-      UPDATE "Building"
-      SET ${Prisma.join(updates)}
-      WHERE "id" = ${id} AND "schoolId" = ${schoolId}
-    `);
+      await client.$executeRaw(Prisma.sql`
+        UPDATE "Building"
+        SET ${Prisma.join(updates)}
+        WHERE "id" = ${id} AND "schoolId" = ${schoolId}
+      `);
 
-    const updated = await this.getBuildingRowById(client, schoolId, id);
-    if (!updated) {
-      throw new NotFoundException('Bâtiment introuvable');
-    }
+      const updated = await this.getBuildingRowById(client, schoolId, id);
+      if (!updated) {
+        throw new NotFoundException('Bâtiment introuvable');
+      }
 
-    const rooms = await this.getRoomRowsForBuilding(client, schoolId, id);
-    return this.mapBuildingSummary(updated, rooms);
+      const rooms = await this.getRoomRowsForBuilding(client, schoolId, id);
+      return this.mapBuildingSummary(updated, rooms);
+    });
   }
 
   async deleteBuilding(tenant: ITenant | null, id: string): Promise<BuildingSummary> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const existing = await this.getBuildingRowById(client, schoolId, id);
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const existing = await this.getBuildingRowById(client, schoolId, id);
 
-    if (!existing) {
-      throw new NotFoundException('Bâtiment introuvable');
-    }
+      if (!existing) {
+        throw new NotFoundException('Bâtiment introuvable');
+      }
 
-    const rooms = await this.getRoomRowsForBuilding(client, schoolId, id);
-    await client.$executeRaw(Prisma.sql`
-      DELETE FROM "Building"
-      WHERE "id" = ${id} AND "schoolId" = ${schoolId}
-    `);
+      const rooms = await this.getRoomRowsForBuilding(client, schoolId, id);
+      await client.$executeRaw(Prisma.sql`
+        DELETE FROM "Building"
+        WHERE "id" = ${id} AND "schoolId" = ${schoolId}
+      `);
 
-    return this.mapBuildingSummary(existing, rooms);
+      return this.mapBuildingSummary(existing, rooms);
+    });
   }
 
   async listRooms(tenant: ITenant | null, query: ListRoomsQueryDto): Promise<RoomSummary[]> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
 
-    const conditions: Prisma.Sql[] = [Prisma.sql`r."schoolId" = ${schoolId}`];
+      const conditions: Prisma.Sql[] = [Prisma.sql`r."schoolId" = ${schoolId}`];
 
-    if (query.buildingId) {
-      conditions.push(Prisma.sql`r."buildingId" = ${query.buildingId}`);
-    }
-    if (query.status) {
-      conditions.push(Prisma.sql`r.status = ${query.status}::"RoomStatus"`);
-    }
-    if (query.roomType) {
-      conditions.push(Prisma.sql`r."roomType" = ${query.roomType}::"RoomType"`);
-    }
-    if (query.floor !== undefined) {
-      conditions.push(Prisma.sql`r.floor = ${query.floor}`);
-    }
-    if (query.search?.trim()) {
-      const search = `%${query.search.trim()}%`;
-      conditions.push(Prisma.sql`
-        (
-          r."name" ILIKE ${search}
-          OR COALESCE(r."description", '') ILIKE ${search}
-          OR COALESCE(r."equipment", '') ILIKE ${search}
-          OR b."name" ILIKE ${search}
-        )
+      if (query.buildingId) {
+        conditions.push(Prisma.sql`r."buildingId" = ${query.buildingId}`);
+      }
+      if (query.status) {
+        conditions.push(Prisma.sql`r.status = ${query.status}::"RoomStatus"`);
+      }
+      if (query.roomType) {
+        conditions.push(Prisma.sql`r."roomType" = ${query.roomType}::"RoomType"`);
+      }
+      if (query.floor !== undefined) {
+        conditions.push(Prisma.sql`r.floor = ${query.floor}`);
+      }
+      if (query.search?.trim()) {
+        const search = `%${query.search.trim()}%`;
+        conditions.push(Prisma.sql`
+          (
+            r."name" ILIKE ${search}
+            OR COALESCE(r."description", '') ILIKE ${search}
+            OR COALESCE(r."equipment", '') ILIKE ${search}
+            OR b."name" ILIKE ${search}
+          )
+        `);
+      }
+
+      const rows = await client.$queryRaw<RoomRowWithBuilding[]>(Prisma.sql`
+        SELECT
+          r."id",
+          r."schoolId",
+          r."buildingId",
+          r."name",
+          r."floor",
+          r."capacity",
+          r."roomType",
+          r."status",
+          r."description",
+          r."equipment",
+          r."createdAt",
+          r."updatedAt",
+          b."name" AS "buildingName",
+          b."floorCount" AS "buildingFloorCount",
+          b."status" AS "buildingStatus"
+        FROM "Room" r
+        JOIN "Building" b ON b."id" = r."buildingId"
+        WHERE ${Prisma.join(conditions, ' AND ')}
+        ORDER BY r."createdAt" DESC
       `);
-    }
 
-    const rows = await client.$queryRaw<RoomRowWithBuilding[]>(Prisma.sql`
-      SELECT
-        r."id",
-        r."schoolId",
-        r."buildingId",
-        r."name",
-        r."floor",
-        r."capacity",
-        r."roomType",
-        r."status",
-        r."description",
-        r."equipment",
-        r."createdAt",
-        r."updatedAt",
-        b."name" AS "buildingName",
-        b."floorCount" AS "buildingFloorCount",
-        b."status" AS "buildingStatus"
-      FROM "Room" r
-      JOIN "Building" b ON b."id" = r."buildingId"
-      WHERE ${Prisma.join(conditions, ' AND ')}
-      ORDER BY r."createdAt" DESC
-    `);
-
-    return rows.map((room) => this.mapRoomSummary(room));
+      return rows.map((room) => this.mapRoomSummary(room));
+    });
   }
 
   async getRoomById(tenant: ITenant | null, id: string): Promise<RoomSummary> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const room = await this.getRoomRowById(client, schoolId, id);
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const room = await this.getRoomRowById(client, schoolId, id);
 
-    if (!room) {
-      throw new NotFoundException('Salle introuvable');
-    }
+      if (!room) {
+        throw new NotFoundException('Salle introuvable');
+      }
 
-    return this.mapRoomSummary(room);
+      return this.mapRoomSummary(room);
+    });
   }
 
   async createRoom(tenant: ITenant | null, dto: CreateRoomDto): Promise<RoomSummary> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const building = await this.getBuildingRowById(client, schoolId, dto.buildingId);
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const building = await this.getBuildingRowById(client, schoolId, dto.buildingId);
 
-    if (!building) {
-      throw new NotFoundException('Bâtiment introuvable');
-    }
+      if (!building) {
+        throw new NotFoundException('Bâtiment introuvable');
+      }
 
-    const floor = dto.floor ?? 0;
-    this.assertFloorIsValid(floor, building.floorCount);
+      const floor = dto.floor ?? 0;
+      this.assertFloorIsValid(floor, building.floorCount);
 
-    const id = randomUUID();
-    await client.$executeRaw(Prisma.sql`
-      INSERT INTO "Room" (
-        "id",
-        "schoolId",
-        "buildingId",
-        "name",
-        "floor",
-        "capacity",
-        "roomType",
-        "status",
-        "description",
-        "equipment",
-        "createdAt",
-        "updatedAt"
-      ) VALUES (
-        ${id},
-        ${schoolId},
-        ${building.id},
-        ${dto.name.trim()},
-        ${floor},
-        ${dto.capacity ?? 30},
-        ${dto.roomType}::"RoomType",
-        ${dto.status ?? RoomStatusEnum.active}::"RoomStatus",
-        ${dto.description?.trim() || null},
-        ${dto.equipment?.trim() || null},
-        CURRENT_TIMESTAMP,
-        CURRENT_TIMESTAMP
-      )
-    `);
+      const id = randomUUID();
+      await client.$executeRaw(Prisma.sql`
+        INSERT INTO "Room" (
+          "id",
+          "schoolId",
+          "buildingId",
+          "name",
+          "floor",
+          "capacity",
+          "roomType",
+          "status",
+          "description",
+          "equipment",
+          "createdAt",
+          "updatedAt"
+        ) VALUES (
+          ${id},
+          ${schoolId},
+          ${building.id},
+          ${dto.name.trim()},
+          ${floor},
+          ${dto.capacity ?? 30},
+          ${dto.roomType}::"RoomType",
+          ${dto.status ?? RoomStatusEnum.active}::"RoomStatus",
+          ${dto.description?.trim() || null},
+          ${dto.equipment?.trim() || null},
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        )
+      `);
 
-    const room = await this.getRoomRowById(client, schoolId, id);
-    if (!room) {
-      throw new NotFoundException('Salle introuvable');
-    }
+      const room = await this.getRoomRowById(client, schoolId, id);
+      if (!room) {
+        throw new NotFoundException('Salle introuvable');
+      }
 
-    return this.mapRoomSummary(room);
+      return this.mapRoomSummary(room);
+    });
   }
 
   async updateRoom(tenant: ITenant | null, id: string, dto: UpdateRoomDto): Promise<RoomSummary> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const existingRoom = await this.getRoomRowById(client, schoolId, id);
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const existingRoom = await this.getRoomRowById(client, schoolId, id);
 
-    if (!existingRoom) {
-      throw new NotFoundException('Salle introuvable');
-    }
+      if (!existingRoom) {
+        throw new NotFoundException('Salle introuvable');
+      }
 
-    const targetBuildingId = dto.buildingId ?? existingRoom.buildingId;
-    const targetFloor = dto.floor ?? existingRoom.floor;
-    const targetBuilding = await this.getBuildingRowById(client, schoolId, targetBuildingId);
+      const targetBuildingId = dto.buildingId ?? existingRoom.buildingId;
+      const targetFloor = dto.floor ?? existingRoom.floor;
+      const targetBuilding = await this.getBuildingRowById(client, schoolId, targetBuildingId);
 
-    if (!targetBuilding) {
-      throw new NotFoundException('Bâtiment introuvable');
-    }
+      if (!targetBuilding) {
+        throw new NotFoundException('Bâtiment introuvable');
+      }
 
-    this.assertFloorIsValid(targetFloor, targetBuilding.floorCount);
+      this.assertFloorIsValid(targetFloor, targetBuilding.floorCount);
 
-    const updates: Prisma.Sql[] = [];
-    if (dto.name !== undefined) {
-      updates.push(Prisma.sql`"name" = ${dto.name.trim()}`);
-    }
-    if (dto.buildingId !== undefined) {
-      updates.push(Prisma.sql`"buildingId" = ${targetBuildingId}`);
-    }
-    if (dto.floor !== undefined) {
-      updates.push(Prisma.sql`"floor" = ${dto.floor}`);
-    }
-    if (dto.capacity !== undefined) {
-      updates.push(Prisma.sql`"capacity" = ${dto.capacity}`);
-    }
-    if (dto.roomType !== undefined) {
-      updates.push(Prisma.sql`"roomType" = ${dto.roomType}::"RoomType"`);
-    }
-    if (dto.status !== undefined) {
-      updates.push(Prisma.sql`"status" = ${dto.status}::"RoomStatus"`);
-    }
-    if (dto.description !== undefined) {
-      updates.push(Prisma.sql`"description" = ${dto.description?.trim() || null}`);
-    }
-    if (dto.equipment !== undefined) {
-      updates.push(Prisma.sql`"equipment" = ${dto.equipment?.trim() || null}`);
-    }
-    updates.push(Prisma.sql`"updatedAt" = CURRENT_TIMESTAMP`);
+      const updates: Prisma.Sql[] = [];
+      if (dto.name !== undefined) {
+        updates.push(Prisma.sql`"name" = ${dto.name.trim()}`);
+      }
+      if (dto.buildingId !== undefined) {
+        updates.push(Prisma.sql`"buildingId" = ${targetBuildingId}`);
+      }
+      if (dto.floor !== undefined) {
+        updates.push(Prisma.sql`"floor" = ${dto.floor}`);
+      }
+      if (dto.capacity !== undefined) {
+        updates.push(Prisma.sql`"capacity" = ${dto.capacity}`);
+      }
+      if (dto.roomType !== undefined) {
+        updates.push(Prisma.sql`"roomType" = ${dto.roomType}::"RoomType"`);
+      }
+      if (dto.status !== undefined) {
+        updates.push(Prisma.sql`"status" = ${dto.status}::"RoomStatus"`);
+      }
+      if (dto.description !== undefined) {
+        updates.push(Prisma.sql`"description" = ${dto.description?.trim() || null}`);
+      }
+      if (dto.equipment !== undefined) {
+        updates.push(Prisma.sql`"equipment" = ${dto.equipment?.trim() || null}`);
+      }
+      updates.push(Prisma.sql`"updatedAt" = CURRENT_TIMESTAMP`);
 
-    await client.$executeRaw(Prisma.sql`
-      UPDATE "Room"
-      SET ${Prisma.join(updates)}
-      WHERE "id" = ${id} AND "schoolId" = ${schoolId}
-    `);
+      await client.$executeRaw(Prisma.sql`
+        UPDATE "Room"
+        SET ${Prisma.join(updates)}
+        WHERE "id" = ${id} AND "schoolId" = ${schoolId}
+      `);
 
-    const room = await this.getRoomRowById(client, schoolId, id);
-    if (!room) {
-      throw new NotFoundException('Salle introuvable');
-    }
+      const room = await this.getRoomRowById(client, schoolId, id);
+      if (!room) {
+        throw new NotFoundException('Salle introuvable');
+      }
 
-    return this.mapRoomSummary(room);
+      return this.mapRoomSummary(room);
+    });
   }
 
   async deleteRoom(tenant: ITenant | null, id: string): Promise<RoomSummary> {
-    const client = await this.getTenantClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const room = await this.getRoomRowById(client, schoolId, id);
+    return this.withSchemaRepair(tenant, async () => {
+      const client = await this.getTenantClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const room = await this.getRoomRowById(client, schoolId, id);
 
-    if (!room) {
-      throw new NotFoundException('Salle introuvable');
-    }
+      if (!room) {
+        throw new NotFoundException('Salle introuvable');
+      }
 
-    await client.$executeRaw(Prisma.sql`
-      DELETE FROM "Room"
-      WHERE "id" = ${id} AND "schoolId" = ${schoolId}
-    `);
+      await client.$executeRaw(Prisma.sql`
+        DELETE FROM "Room"
+        WHERE "id" = ${id} AND "schoolId" = ${schoolId}
+      `);
 
-    return this.mapRoomSummary(room);
+      return this.mapRoomSummary(room);
+    });
   }
 
   async getHierarchy(tenant: ITenant | null, query: ListRoomsQueryDto): Promise<BuildingHierarchyItem[]> {
-    const buildings = await this.listBuildings(tenant, {
-      search: query.search,
-      status: query.status,
-    });
-    const rooms = await this.listRooms(tenant, query);
+    return this.withSchemaRepair(tenant, async () => {
+      const buildings = await this.listBuildings(tenant, {
+        search: query.search,
+        status: query.status,
+      });
+      const rooms = await this.listRooms(tenant, query);
 
-    return buildings.map((building) => ({
-      ...building,
-      rooms: rooms.filter((room) => room.buildingId === building.id),
-    }));
+      return buildings.map((building) => ({
+        ...building,
+        rooms: rooms.filter((room) => room.buildingId === building.id),
+      }));
+    });
   }
 
   private async getTenantClient(tenant: ITenant | null): Promise<RawPrismaClient> {
@@ -636,9 +699,9 @@ export class InfrastructureService {
     rooms: Array<Pick<RoomMetricsRow, 'status' | 'capacity' | 'roomType'>>,
   ): BuildingSummary {
     const roomCount = rooms.length;
-    const activeRoomCount = rooms.filter((room) => room.status === BuildingStatusEnum.active).length;
-    const maintenanceRoomCount = rooms.filter((room) => room.status === BuildingStatusEnum.maintenance).length;
-    const inactiveRoomCount = rooms.filter((room) => room.status === BuildingStatusEnum.inactive).length;
+    const activeRoomCount = rooms.filter((room) => room.status === RoomStatusEnum.active).length;
+    const maintenanceRoomCount = rooms.filter((room) => room.status === RoomStatusEnum.maintenance).length;
+    const inactiveRoomCount = rooms.filter((room) => room.status === RoomStatusEnum.inactive).length;
     const totalCapacity = rooms.reduce((sum, room) => sum + Number(room.capacity ?? 0), 0);
 
     return {

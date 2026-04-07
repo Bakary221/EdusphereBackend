@@ -1,8 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaClient, Prisma } from '@prisma/client';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
-import execa from 'execa';
+import { spawnSync } from 'node:child_process';
 
 @Injectable()
 export class TenantProvisioningService implements OnModuleInit, OnModuleDestroy {
@@ -31,7 +32,7 @@ export class TenantProvisioningService implements OnModuleInit, OnModuleDestroy 
       this.config.get<string>('PRISMA_TENANT_SCHEMA_PATH') ??
       this.config.get<string>('PRISMA_SCHEMA_PATH') ??
       'prisma/tenant/schema.prisma';
-    this.schemaPath = path.resolve(process.cwd(), rawSchemaPath);
+    this.schemaPath = this.resolveSchemaPath(rawSchemaPath);
     this.nameTemplate = this.config.get<string>('TENANT_DB_NAME_TEMPLATE') ?? 'edusphere_%s';
     const rawUrlTemplate = this.config.get<string>('TENANT_DB_URL_TEMPLATE')?.trim() ?? '';
     if (rawUrlTemplate.length > 0) {
@@ -67,12 +68,40 @@ export class TenantProvisioningService implements OnModuleInit, OnModuleDestroy 
     }
   }
 
+  async syncTenantSchema(databaseUrl: string, label = 'tenant'): Promise<void> {
+    if (!databaseUrl || databaseUrl.trim() === '') {
+      throw new Error('Tenant databaseUrl must be provided to sync schema');
+    }
+
+    await this.pushTenantSchema(label, databaseUrl);
+  }
+
   private normalizeSlug(slug: string): string {
     return slug
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '');
+  }
+
+  private resolveSchemaPath(rawSchemaPath: string): string {
+    const candidatePaths = path.isAbsolute(rawSchemaPath)
+      ? [rawSchemaPath]
+      : [
+          path.resolve(process.cwd(), rawSchemaPath),
+          path.resolve(__dirname, '../../prisma/tenant/schema.prisma'),
+        ];
+
+    const existingPath = candidatePaths.find((candidate) => existsSync(candidate));
+    if (existingPath) {
+      return existingPath;
+    }
+
+    return candidatePaths[0];
+  }
+
+  private getWorkingDirectory(): string {
+    return path.resolve(path.dirname(this.schemaPath), '..', '..');
   }
 
   private buildDatabaseName(slug: string): string {
@@ -108,7 +137,7 @@ export class TenantProvisioningService implements OnModuleInit, OnModuleDestroy 
       this.logger.log(`Tenant database ${dbName} already exists`);
     }
 
-    await this.applyMigrations(dbName, dbUrl);
+    await this.pushTenantSchema(dbName, dbUrl);
     return dbUrl;
   }
 
@@ -119,30 +148,46 @@ export class TenantProvisioningService implements OnModuleInit, OnModuleDestroy 
     return rows.length > 0;
   }
 
-  private async applyMigrations(dbName: string, databaseUrl: string) {
-    this.logger.log(`Applying migrations for tenant ${dbName}`);
+  private async pushTenantSchema(label: string, databaseUrl: string): Promise<void> {
+    this.logger.log(`Applying migrations for tenant ${label}`);
     try {
-    await execa(
-      'npx',
-      [
-        'prisma',
-        'migrate',
-        'deploy',
-        '--schema',
-        this.schemaPath,
-      ],
-      {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          DATABASE_URL: databaseUrl,
+      const result = spawnSync(
+        'npx',
+        [
+          'prisma',
+          'db',
+          'push',
+          '--schema',
+          this.schemaPath,
+          '--accept-data-loss',
+        ],
+        {
+          cwd: this.getWorkingDirectory(),
+          env: {
+            ...process.env,
+            DATABASE_URL: databaseUrl,
+          },
+          stdio: 'inherit',
         },
-        stdio: 'pipe',
-      },
-    );
+      );
+
+      if (result.status !== 0) {
+        const error =
+          result.error ?? new Error(`prisma db push exited with status ${result.status ?? 'unknown'}`);
+        this.logger.error(`Unable to apply schema for ${label}`, error as Error);
+        throw new ServiceUnavailableException(
+          `Impossible de synchroniser le schéma du tenant ${label}.`,
+        );
+      }
     } catch (error) {
-      this.logger.error(`Unable to apply migrations for ${dbName}`, error as Error);
-      throw error;
+      this.logger.error(`Unable to apply schema for ${label}`, error as Error);
+      if (error instanceof ServiceUnavailableException) {
+        throw error;
+      }
+
+      throw new ServiceUnavailableException(
+        `Impossible de synchroniser le schéma du tenant ${label}.`,
+      );
     }
   }
 }

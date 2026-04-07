@@ -1,8 +1,10 @@
 import {
   Injectable,
   NestMiddleware,
+  HttpException,
   NotFoundException,
   ForbiddenException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { ConfigService } from '@nestjs/config';
@@ -28,39 +30,49 @@ export class TenantMiddleware implements NestMiddleware {
   ) {}
 
   async use(req: Request & { school?: ITenant | null }, res: Response, next: NextFunction) {
-    const slug = req.headers['x-tenant-slug'] as string | undefined;
+    try {
+      const slug = req.headers['x-tenant-slug'] as string | undefined;
 
-    // Pas de header → contexte sans tenant (SUPER_ADMIN)
-    if (!slug || slug.trim() === '') {
-      req.school = null;
-      const hostnameSlug = this.extractSlugFromHostname(req.hostname);
-      if (!hostnameSlug) {
+      // Pas de header → contexte sans tenant (SUPER_ADMIN)
+      if (!slug || slug.trim() === '') {
+        req.school = null;
+        const hostnameSlug = this.extractSlugFromHostname(req.hostname);
+        if (!hostnameSlug) {
+          return next();
+        }
+        await this.attachTenant(hostnameSlug, req);
         return next();
       }
-      return this.handleTenant(hostnameSlug, req, next);
-    }
 
-    const normalizedSlug = slug.trim().toLowerCase();
-    return this.handleTenant(normalizedSlug, req, next);
+      const normalizedSlug = slug.trim().toLowerCase();
+      await this.attachTenant(normalizedSlug, req);
+      return next();
+    } catch (error) {
+      this.sendErrorResponse(res, error);
+    }
   }
 
-  private async handleTenant(
+  private async attachTenant(
     normalizedSlug: string,
     req: Request & { school?: ITenant | null },
-    next: NextFunction,
   ) {
     const slug = normalizedSlug;
-    const school = await this.prisma.school.findUnique({
-      where: { slug },
-      select: {
-        id: true,
-        slug: true,
-        name: true,
-        status: true,
-        plan: true,
-        databaseUrl: true,
-      },
-    });
+    let school: ITenant | null;
+    try {
+      school = await this.prisma.school.findUnique({
+        where: { slug },
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          status: true,
+          plan: true,
+          databaseUrl: true,
+        },
+      });
+    } catch (error) {
+      throw new ServiceUnavailableException('La base centrale est temporairement indisponible.');
+    }
 
     if (!school) {
       throw new NotFoundException({
@@ -78,7 +90,53 @@ export class TenantMiddleware implements NestMiddleware {
 
     // Attache le tenant à la requête HTTP
     req.school = school as ITenant;
-    next();
+  }
+
+  private sendErrorResponse(res: Response, error: unknown): void {
+    if (error instanceof HttpException) {
+      const status = error.getStatus();
+      const response = error.getResponse();
+      const payload = typeof response === 'object' && response !== null
+        ? (response as Record<string, unknown>)
+        : {};
+
+      const code = typeof payload.code === 'string'
+        ? payload.code
+        : 'INTERNAL_ERROR';
+
+      const message = typeof payload.message === 'string'
+        ? payload.message
+        : typeof response === 'string'
+          ? response
+          : error.message;
+
+      const details = Array.isArray(payload.details)
+        ? payload.details.filter((detail): detail is string => typeof detail === 'string')
+        : [];
+
+      res.status(status).json({
+        error: {
+          code,
+          message,
+          details,
+        },
+        _links: {
+          documentation: '/api/docs#errors',
+        },
+      });
+      return;
+    }
+
+    res.status(503).json({
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'La base centrale est temporairement indisponible.',
+        details: [],
+      },
+      _links: {
+        documentation: '/api/docs#errors',
+      },
+    });
   }
 
   private extractSlugFromHostname(hostname?: string): string | null {

@@ -21,31 +21,44 @@ let TenantMiddleware = class TenantMiddleware {
         this.config = config;
     }
     async use(req, res, next) {
-        const slug = req.headers['x-tenant-slug'];
-        if (!slug || slug.trim() === '') {
-            req.school = null;
-            const hostnameSlug = this.extractSlugFromHostname(req.hostname);
-            if (!hostnameSlug) {
+        try {
+            const slug = req.headers['x-tenant-slug'];
+            if (!slug || slug.trim() === '') {
+                req.school = null;
+                const hostnameSlug = this.extractSlugFromHostname(req.hostname);
+                if (!hostnameSlug) {
+                    return next();
+                }
+                await this.attachTenant(hostnameSlug, req);
                 return next();
             }
-            return this.handleTenant(hostnameSlug, req, next);
+            const normalizedSlug = slug.trim().toLowerCase();
+            await this.attachTenant(normalizedSlug, req);
+            return next();
         }
-        const normalizedSlug = slug.trim().toLowerCase();
-        return this.handleTenant(normalizedSlug, req, next);
+        catch (error) {
+            this.sendErrorResponse(res, error);
+        }
     }
-    async handleTenant(normalizedSlug, req, next) {
+    async attachTenant(normalizedSlug, req) {
         const slug = normalizedSlug;
-        const school = await this.prisma.school.findUnique({
-            where: { slug },
-            select: {
-                id: true,
-                slug: true,
-                name: true,
-                status: true,
-                plan: true,
-                databaseUrl: true,
-            },
-        });
+        let school;
+        try {
+            school = await this.prisma.school.findUnique({
+                where: { slug },
+                select: {
+                    id: true,
+                    slug: true,
+                    name: true,
+                    status: true,
+                    plan: true,
+                    databaseUrl: true,
+                },
+            });
+        }
+        catch (error) {
+            throw new common_1.ServiceUnavailableException('La base centrale est temporairement indisponible.');
+        }
         if (!school) {
             throw new common_1.NotFoundException({
                 code: error_codes_enum_1.ErrorCode.TENANT_NOT_FOUND,
@@ -59,7 +72,47 @@ let TenantMiddleware = class TenantMiddleware {
             });
         }
         req.school = school;
-        next();
+    }
+    sendErrorResponse(res, error) {
+        if (error instanceof common_1.HttpException) {
+            const status = error.getStatus();
+            const response = error.getResponse();
+            const payload = typeof response === 'object' && response !== null
+                ? response
+                : {};
+            const code = typeof payload.code === 'string'
+                ? payload.code
+                : 'INTERNAL_ERROR';
+            const message = typeof payload.message === 'string'
+                ? payload.message
+                : typeof response === 'string'
+                    ? response
+                    : error.message;
+            const details = Array.isArray(payload.details)
+                ? payload.details.filter((detail) => typeof detail === 'string')
+                : [];
+            res.status(status).json({
+                error: {
+                    code,
+                    message,
+                    details,
+                },
+                _links: {
+                    documentation: '/api/docs#errors',
+                },
+            });
+            return;
+        }
+        res.status(503).json({
+            error: {
+                code: 'INTERNAL_ERROR',
+                message: 'La base centrale est temporairement indisponible.',
+                details: [],
+            },
+            _links: {
+                documentation: '/api/docs#errors',
+            },
+        });
     }
     extractSlugFromHostname(hostname) {
         if (!hostname)

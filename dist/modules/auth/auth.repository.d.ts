@@ -39,6 +39,8 @@ export declare class AuthRepository {
     private tenantProvisioningService;
     constructor(prisma: PrismaService, tenantDatabaseService: TenantDatabaseService, tenantProvisioningService: TenantProvisioningService);
     private resolvePrismaClient;
+    private isSchemaMismatchError;
+    private withTenantSchemaRepair;
     findUserByEmail(email: string, tenant?: ITenant | null): Promise<User | null>;
     findUserById(id: string, tenant?: ITenant | null): Promise<User | null>;
     findSchoolBySlug(slug: string): Promise<School | null>;

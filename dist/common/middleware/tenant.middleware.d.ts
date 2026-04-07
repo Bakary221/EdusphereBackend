@@ -10,6 +10,7 @@ export declare class TenantMiddleware implements NestMiddleware {
     use(req: Request & {
         school?: ITenant | null;
     }, res: Response, next: NextFunction): Promise<void>;
-    private handleTenant;
+    private attachTenant;
+    private sendErrorResponse;
     private extractSlugFromHostname;
 }

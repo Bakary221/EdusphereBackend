@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthRepository = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../database/prisma.service");
+const client_1 = require("@prisma/client");
 const tenant_database_service_1 = require("../../database/tenant-database.service");
 const tenant_provisioning_service_1 = require("../../database/tenant-provisioning.service");
 let AuthRepository = class AuthRepository {
@@ -26,17 +27,33 @@ let AuthRepository = class AuthRepository {
         }
         return this.prisma;
     }
+    isSchemaMismatchError(error) {
+        return (error instanceof client_1.Prisma.PrismaClientKnownRequestError &&
+            (error.code === 'P2021' || error.code === 'P2022'));
+    }
+    async withTenantSchemaRepair(tenant, operation) {
+        try {
+            return await operation();
+        }
+        catch (error) {
+            if (!tenant || !this.isSchemaMismatchError(error)) {
+                throw error;
+            }
+            await this.tenantProvisioningService.syncTenantSchema(tenant.databaseUrl, tenant.slug);
+            return operation();
+        }
+    }
     async findUserByEmail(email, tenant) {
         const prisma = await this.resolvePrismaClient(tenant);
-        return prisma.user.findFirst({
+        return this.withTenantSchemaRepair(tenant ?? null, () => prisma.user.findFirst({
             where: {
                 email,
             },
-        });
+        }));
     }
     async findUserById(id, tenant) {
         const prisma = await this.resolvePrismaClient(tenant);
-        return prisma.user.findUnique({ where: { id } });
+        return this.withTenantSchemaRepair(tenant ?? null, () => prisma.user.findUnique({ where: { id } }));
     }
     async findSchoolBySlug(slug) {
         return this.prisma.school.findUnique({ where: { slug } });
@@ -103,19 +120,19 @@ let AuthRepository = class AuthRepository {
     }
     async findSessionByRefreshToken(token, tenant) {
         const prisma = await this.resolvePrismaClient(tenant);
-        return prisma.session.findUnique({ where: { refreshToken: token } });
+        return this.withTenantSchemaRepair(tenant, () => prisma.session.findUnique({ where: { refreshToken: token } }));
     }
     async createSession(data, tenant) {
         const prisma = await this.resolvePrismaClient(tenant);
-        return prisma.session.create({ data });
+        return this.withTenantSchemaRepair(tenant, () => prisma.session.create({ data }));
     }
     async deleteSessionById(id, tenant) {
         const prisma = await this.resolvePrismaClient(tenant);
-        return prisma.session.delete({ where: { id } });
+        return this.withTenantSchemaRepair(tenant, () => prisma.session.delete({ where: { id } }));
     }
     async deleteUserSessions(userId, tenant) {
         const prisma = await this.resolvePrismaClient(tenant);
-        await prisma.session.deleteMany({ where: { userId } });
+        await this.withTenantSchemaRepair(tenant, () => prisma.session.deleteMany({ where: { userId } }));
     }
     async listSchools() {
         return this.prisma.school.findMany({ orderBy: { createdAt: 'desc' } });
