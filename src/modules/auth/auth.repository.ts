@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@database/prisma.service';
-import { Prisma, User, School, Session, UserRole, SchoolStatus } from '@prisma/client';
+import { User, School, Session, UserRole, SchoolStatus } from '@prisma/client';
 import { TenantDatabaseService } from '@database/tenant-database.service';
 import { TenantProvisioningService } from '@database/tenant-provisioning.service';
 import { ITenant } from '@common/interfaces/tenant.interface';
@@ -52,11 +52,12 @@ export class AuthRepository {
     return this.prisma;
   }
 
-  private isSchemaMismatchError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
-    return (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      (error.code === 'P2021' || error.code === 'P2022')
-    );
+  private isSchemaMismatchError(error: unknown): boolean {
+    if (!error || typeof error !== 'object' || !('code' in error) || typeof (error as { code?: unknown }).code !== 'string') {
+      return false;
+    }
+
+    return (error as { code?: string }).code === 'P2021' || (error as { code?: string }).code === 'P2022';
   }
 
   private async withTenantSchemaRepair<T>(

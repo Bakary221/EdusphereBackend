@@ -109,6 +109,19 @@ export class UsersController {
     return { data };
   }
 
+  @Get('students/:matricule')
+  @ApiOperation({ summary: 'Trouver un élève par matricule' })
+  @ApiParam({ name: 'matricule', description: 'Matricule de l élève' })
+  @ApiOkResponse({ description: 'Élève trouvé' })
+  async findStudentByMatricule(
+    @CurrentTenant() tenant: ITenant | null,
+    @Param('matricule') matricule: string,
+    @Req() req: Request,
+  ) {
+    const data = await this.usersService.findStudentByMatricule(tenant, matricule);
+    return { data };
+  }
+
   @Post('students')
   @ApiBody({ type: CreateStudentDto })
   @ApiCreatedResponse({ description: 'Élève créé avec succès' })

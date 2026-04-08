@@ -158,6 +158,13 @@ export class AcademicService {
     const client = await this.getClient(tenant);
     const schoolId = this.requireTenant(tenant).id;
     const existing = await this.requireAcademicYear(client, schoolId, id);
+    const linkedEnrollments = await client.enrollment.count({
+      where: { schoolId, academicYearId: id },
+    });
+
+    if (linkedEnrollments > 0) {
+      throw new BadRequestException('Impossible de supprimer une année scolaire utilisée par des inscriptions.');
+    }
 
     await client.academicYear.delete({ where: { id } });
 
@@ -359,6 +366,8 @@ export class AcademicService {
     await this.requireAcademicYear(client, schoolId, academicYearId);
 
     const created = await client.$transaction(async (tx: any) => {
+      await this.ensureSemesterCapacity(tx, schoolId, academicYearId);
+
       const semester = await tx.semester.create({
         data: {
           schoolId,
@@ -408,6 +417,10 @@ export class AcademicService {
     }
 
     const updated = await client.$transaction(async (tx: any) => {
+      if (dto.academicYearId !== undefined && dto.academicYearId !== existing.academicYearId) {
+        await this.ensureSemesterCapacity(tx, schoolId, dto.academicYearId, id);
+      }
+
       const semester = await tx.semester.update({
         where: { id },
         data: {
@@ -450,6 +463,13 @@ export class AcademicService {
     const client = await this.getClient(tenant);
     const schoolId = this.requireTenant(tenant).id;
     const existing = await this.requireSemester(client, schoolId, id);
+    const linkedEnrollments = await client.enrollment.count({
+      where: { schoolId, semesterId: id },
+    });
+
+    if (linkedEnrollments > 0) {
+      throw new BadRequestException('Impossible de supprimer un semestre utilisé par des inscriptions.');
+    }
 
     await client.semester.delete({ where: { id } });
 
@@ -516,10 +536,12 @@ export class AcademicService {
     const client = await this.getClient(tenant);
     const schoolId = this.requireTenant(tenant).id;
     const academicYearId = query.academicYearId ?? (await this.getDefaultAcademicYearId(client, schoolId));
+    const levelId = query.levelId ?? query.level;
     const classes = await client.schoolClass.findMany({
       where: {
         schoolId,
         ...(academicYearId ? { academicYearId } : {}),
+        ...(levelId ? { levelId } : {}),
         ...(query.status ? { status: query.status } : {}),
       },
       include: {
@@ -619,6 +641,13 @@ export class AcademicService {
     const client = await this.getClient(tenant);
     const schoolId = this.requireTenant(tenant).id;
     const existing = await this.requireClass(client, schoolId, id);
+    const linkedEnrollments = await client.enrollment.count({
+      where: { schoolId, classId: id },
+    });
+
+    if (linkedEnrollments > 0) {
+      throw new BadRequestException('Impossible de supprimer une classe utilisée par des inscriptions.');
+    }
 
     await client.schoolClass.delete({ where: { id } });
 
@@ -1441,6 +1470,25 @@ export class AcademicService {
       throw new NotFoundException('Semestre introuvable');
     }
     return semester;
+  }
+
+  private async ensureSemesterCapacity(
+    client: any,
+    schoolId: string,
+    academicYearId: string,
+    excludeSemesterId?: string,
+  ): Promise<void> {
+    const semesterCount = await client.semester.count({
+      where: {
+        schoolId,
+        academicYearId,
+        ...(excludeSemesterId ? { id: { not: excludeSemesterId } } : {}),
+      },
+    });
+
+    if (semesterCount >= 2) {
+      throw new BadRequestException('Une année scolaire ne peut contenir que deux semestres.');
+    }
   }
 
   private async requireLevel(client: any, schoolId: string, id: string): Promise<any> {

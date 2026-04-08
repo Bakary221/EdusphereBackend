@@ -29,6 +29,9 @@ model User {
   teacherProfile     TeacherProfile?  @relation("TeacherUser")
   studentProfile     StudentProfile?  @relation("StudentUser")
   parentProfile      ParentProfile?   @relation("ParentUser")
+  childrenProfiles   StudentProfile[] @relation("ParentOfStudent")
+  studentEnrollments  Enrollment[]    @relation("EnrollmentStudent")
+  parentEnrollments   Enrollment[]    @relation("EnrollmentParent")
   headTeacherClasses SchoolClass[]    @relation("ClassHeadTeacher")
   timetableEntries   TimetableEntry[] @relation("TimetableTeacher")
   createdAt          DateTime        @default(now())
@@ -56,6 +59,8 @@ model AcademicYear {
   startDate  DateTime
   endDate    DateTime
   status     String       @default("draft")
+  enrollmentPeriods EnrollmentPeriod[]
+  enrollments Enrollment[]
   semesters  Semester[]
   classes    SchoolClass[]
   studentProfiles StudentProfile[]
@@ -76,6 +81,7 @@ model Level {
   sortOrder   Int          @default(0)
   status      String       @default("active")
   classes     SchoolClass[]
+  enrollments Enrollment[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
@@ -95,6 +101,7 @@ model Semester {
   endDate       DateTime
   status        String       @default("active")
   average       Float?
+  enrollments   Enrollment[]
   timetables    Timetable[]
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -119,6 +126,8 @@ model SchoolClass {
   headTeacher   User?           @relation("ClassHeadTeacher", fields: [headTeacherId], references: [id], onDelete: SetNull)
   students      StudentProfile[]
   parentProfiles ParentProfile[]
+  enrollments   Enrollment[]
+  previousEnrollments Enrollment[] @relation("EnrollmentPreviousClass")
   subjectLinks  ClassSubject[]
   timetables    Timetable[]
   timetableEntries TimetableEntry[]
@@ -212,25 +221,115 @@ model StudentProfile {
   schoolId       String
   userId         String      @unique
   user           User        @relation("StudentUser", fields: [userId], references: [id], onDelete: Cascade)
+  parentUserId   String?
+  parentUser     User?       @relation("ParentOfStudent", fields: [parentUserId], references: [id], onDelete: SetNull)
   academicYearId String?
   academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id], onDelete: SetNull)
   classId        String?
   class          SchoolClass? @relation(fields: [classId], references: [id], onDelete: SetNull)
   average        Float       @default(0)
+  matricule      String?     @unique
   enrollmentYear String
   qrCode         String?
   dateOfBirth    DateTime?
   gender         String?
   address        String?
+  previousSchool String?
   parentName     String?
   parentPhone    String?
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
   @@index([schoolId])
+  @@index([parentUserId])
   @@index([academicYearId])
   @@index([classId])
+  @@index([matricule])
   @@index([enrollmentYear])
+}
+
+model EnrollmentPeriod {
+  id             String       @id @default(cuid())
+  schoolId       String
+  academicYearId String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  type           String
+  name           String
+  startDate      DateTime
+  endDate        DateTime
+  isActive       Boolean      @default(false)
+  maxEnrollments Int?
+  description    String?
+  enrollments    Enrollment[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([schoolId])
+  @@index([academicYearId])
+  @@index([type])
+  @@index([isActive])
+  @@unique([schoolId, academicYearId, type, name])
+}
+
+model Enrollment {
+  id               String        @id @default(cuid())
+  schoolId         String
+  type             String
+  periodId         String
+  period           EnrollmentPeriod @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  studentUserId    String?
+  studentUser      User?         @relation("EnrollmentStudent", fields: [studentUserId], references: [id], onDelete: SetNull)
+  parentUserId     String?
+  parentUser       User?         @relation("EnrollmentParent", fields: [parentUserId], references: [id], onDelete: SetNull)
+  matricule        String
+  qrCode           String
+  academicYearId   String
+  academicYear     AcademicYear  @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  semesterId       String
+  semester         Semester      @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+  classId          String
+  class            SchoolClass    @relation(fields: [classId], references: [id], onDelete: Restrict)
+  levelId          String?
+  level            Level?        @relation(fields: [levelId], references: [id], onDelete: SetNull)
+  previousClassId  String?
+  previousClass    SchoolClass?  @relation("EnrollmentPreviousClass", fields: [previousClassId], references: [id], onDelete: SetNull)
+  enrollmentNumber String        @unique
+  receiptNumber    String        @unique
+  status           String        @default("paid")
+  paymentStatus    String        @default("completed")
+  paymentMethod    String?
+  paymentAmount    Int           @default(0)
+  paymentReference String?
+  paymentDate      DateTime?
+  confirmedAt      DateTime?
+  notes            String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([schoolId])
+  @@index([periodId])
+  @@index([studentUserId])
+  @@index([parentUserId])
+  @@index([classId])
+  @@index([academicYearId])
+  @@index([semesterId])
+  @@index([matricule])
+  @@unique([schoolId, studentUserId, academicYearId, semesterId, type])
+}
+
+model SequenceCounter {
+  id             String   @id @default(cuid())
+  schoolId       String
+  academicYearId String
+  kind           String
+  currentValue   Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([schoolId, academicYearId, kind])
+  @@index([schoolId])
+  @@index([academicYearId])
+  @@index([kind])
 }
 
 model ParentProfile {

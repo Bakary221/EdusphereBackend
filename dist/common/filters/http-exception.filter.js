@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.HttpExceptionFilter = void 0;
 const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
 const error_codes_enum_1 = require("../enums/error-codes.enum");
 const error_messages_1 = require("../i18n/error-messages");
 const isPrismaErrorLike = (value) => {
@@ -65,6 +66,14 @@ let HttpExceptionFilter = class HttpExceptionFilter {
                 message = getPrismaUniqueConstraintMessage(target, locale);
                 details = target.length > 0 ? [`Champs concernés : ${target.join(', ')}`] : [];
             }
+            else if (exception.code === 'P2028') {
+                status = common_1.HttpStatus.SERVICE_UNAVAILABLE;
+                code = error_codes_enum_1.ErrorCode.INTERNAL_ERROR;
+                message =
+                    locale === 'fr'
+                        ? 'La transaction a expiré. Réessayez.'
+                        : 'The transaction timed out. Please try again.';
+            }
             else if (exception.code === 'P2025') {
                 status = common_1.HttpStatus.NOT_FOUND;
                 code = error_codes_enum_1.ErrorCode.NOT_FOUND;
@@ -78,6 +87,22 @@ let HttpExceptionFilter = class HttpExceptionFilter {
                         ? 'La référence liée est invalide.'
                         : 'The related reference is invalid.';
             }
+        }
+        else if (exception instanceof client_1.Prisma.PrismaClientValidationError) {
+            status = common_1.HttpStatus.BAD_REQUEST;
+            code = error_codes_enum_1.ErrorCode.BAD_REQUEST;
+            message =
+                locale === 'fr'
+                    ? 'Les données envoyées sont invalides.'
+                    : 'The submitted data is invalid.';
+        }
+        else if (exception instanceof client_1.Prisma.PrismaClientInitializationError) {
+            status = common_1.HttpStatus.SERVICE_UNAVAILABLE;
+            code = error_codes_enum_1.ErrorCode.INTERNAL_ERROR;
+            message =
+                locale === 'fr'
+                    ? 'La base de données est temporairement indisponible.'
+                    : 'The database is temporarily unavailable.';
         }
         else if (exception instanceof common_1.HttpException) {
             status = exception.getStatus();

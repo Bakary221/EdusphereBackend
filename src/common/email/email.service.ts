@@ -106,6 +106,70 @@ L'équipe EduSphere`;
     });
   }
 
+  async sendEnrollmentCredentials(params: {
+    to: string;
+    firstName?: string;
+    schoolName: string;
+    tenantSlug: string;
+    accountLabel: string;
+    login: string;
+    password: string;
+    matricule: string;
+    enrollmentNumber: string;
+    receiptNumber: string;
+    amount: number;
+    academicYear: string;
+    semester: string;
+    className: string;
+  }) {
+    const tenantUrl = this.buildTenantUrl(params.tenantSlug);
+    const subject = `${params.schoolName} • Compte ${params.accountLabel}`;
+    const html = `
+      <p>Bonjour ${params.firstName ?? 'Utilisateur'},</p>
+      <p>Votre compte ${params.accountLabel} a été créé pour <strong>${params.schoolName}</strong>.</p>
+      <ul>
+        <li><strong>URL :</strong> <a href="${tenantUrl}">${tenantUrl}</a></li>
+        <li><strong>Login :</strong> ${params.login}</li>
+        <li><strong>Mot de passe temporaire :</strong> ${params.password}</li>
+        <li><strong>Matricule :</strong> ${params.matricule}</li>
+        <li><strong>Inscription :</strong> ${params.enrollmentNumber}</li>
+        <li><strong>Reçu :</strong> ${params.receiptNumber}</li>
+        <li><strong>Montant payé :</strong> ${params.amount.toLocaleString()} CFA</li>
+        <li><strong>Année :</strong> ${params.academicYear}</li>
+        <li><strong>Semestre :</strong> ${params.semester}</li>
+        <li><strong>Classe :</strong> ${params.className}</li>
+      </ul>
+      <p>Pour des raisons de sécurité, changez votre mot de passe après la première connexion.</p>
+      <p>À bientôt,<br/>L'équipe EduSphere</p>
+    `;
+    const text = `Bonjour ${params.firstName ?? 'Utilisateur'},
+
+Votre compte ${params.accountLabel} a été créé pour ${params.schoolName}.
+
+URL : ${tenantUrl}
+Login : ${params.login}
+Mot de passe temporaire : ${params.password}
+Matricule : ${params.matricule}
+Inscription : ${params.enrollmentNumber}
+Reçu : ${params.receiptNumber}
+Montant payé : ${params.amount.toLocaleString()} CFA
+Année : ${params.academicYear}
+Semestre : ${params.semester}
+Classe : ${params.className}
+
+Changez votre mot de passe après la première connexion.
+
+À bientôt,
+L'équipe EduSphere`;
+
+    await this.send({
+      to: [{ email: params.to, name: params.firstName }],
+      subject,
+      html,
+      text,
+    });
+  }
+
   private parseAddress(value: string): EmailAddress {
     const match = value.match(/^(.*)<(.+@.+)>$/);
     if (match) {

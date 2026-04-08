@@ -15,6 +15,8 @@ const auth_module_1 = require("./modules/auth/auth.module");
 const super_admin_module_1 = require("./modules/super-admin/super-admin.module");
 const infrastructure_module_1 = require("./modules/infrastructure/infrastructure.module");
 const academic_module_1 = require("./modules/school-admin/academic/academic.module");
+const enrollment_module_1 = require("./modules/school-admin/enrollments/enrollment.module");
+const school_profile_module_1 = require("./modules/school-admin/school-profile/school-profile.module");
 const users_module_1 = require("./modules/school-admin/users/users.module");
 const health_controller_1 = require("./app/health.controller");
 const root_controller_1 = require("./app/root.controller");
@@ -45,6 +47,8 @@ exports.AppModule = AppModule = __decorate([
             super_admin_module_1.SuperAdminModule,
             infrastructure_module_1.InfrastructureModule,
             academic_module_1.AcademicModule,
+            enrollment_module_1.EnrollmentModule,
+            school_profile_module_1.SchoolProfileModule,
             users_module_1.UsersModule,
         ],
         controllers: [health_controller_1.HealthController, root_controller_1.RootController],

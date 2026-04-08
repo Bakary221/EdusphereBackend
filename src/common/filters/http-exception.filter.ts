@@ -5,6 +5,7 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Response } from 'express';
 import type { Request } from 'express';
 import { ErrorResponse } from '../dtos/response.dto';
@@ -85,6 +86,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
         code = ErrorCode.CONFLICT;
         message = getPrismaUniqueConstraintMessage(target, locale);
         details = target.length > 0 ? [`Champs concernés : ${target.join(', ')}`] : [];
+      } else if (exception.code === 'P2028') {
+        status = HttpStatus.SERVICE_UNAVAILABLE;
+        code = ErrorCode.INTERNAL_ERROR;
+        message =
+          locale === 'fr'
+            ? 'La transaction a expiré. Réessayez.'
+            : 'The transaction timed out. Please try again.';
       } else if (exception.code === 'P2025') {
         status = HttpStatus.NOT_FOUND;
         code = ErrorCode.NOT_FOUND;
@@ -97,6 +105,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
             ? 'La référence liée est invalide.'
             : 'The related reference is invalid.';
       }
+    } else if (exception instanceof Prisma.PrismaClientValidationError) {
+      status = HttpStatus.BAD_REQUEST;
+      code = ErrorCode.BAD_REQUEST;
+      message =
+        locale === 'fr'
+          ? 'Les données envoyées sont invalides.'
+          : 'The submitted data is invalid.';
+    } else if (exception instanceof Prisma.PrismaClientInitializationError) {
+      status = HttpStatus.SERVICE_UNAVAILABLE;
+      code = ErrorCode.INTERNAL_ERROR;
+      message =
+        locale === 'fr'
+          ? 'La base de données est temporairement indisponible.'
+          : 'The database is temporarily unavailable.';
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       

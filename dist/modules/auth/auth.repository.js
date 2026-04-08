@@ -12,7 +12,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthRepository = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../database/prisma.service");
-const client_1 = require("@prisma/client");
 const tenant_database_service_1 = require("../../database/tenant-database.service");
 const tenant_provisioning_service_1 = require("../../database/tenant-provisioning.service");
 let AuthRepository = class AuthRepository {
@@ -28,8 +27,10 @@ let AuthRepository = class AuthRepository {
         return this.prisma;
     }
     isSchemaMismatchError(error) {
-        return (error instanceof client_1.Prisma.PrismaClientKnownRequestError &&
-            (error.code === 'P2021' || error.code === 'P2022'));
+        if (!error || typeof error !== 'object' || !('code' in error) || typeof error.code !== 'string') {
+            return false;
+        }
+        return error.code === 'P2021' || error.code === 'P2022';
     }
     async withTenantSchemaRepair(tenant, operation) {
         try {

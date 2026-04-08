@@ -6,6 +6,8 @@ import { AuthModule } from '@modules/auth/auth.module';
 import { SuperAdminModule } from '@modules/super-admin/super-admin.module';
 import { InfrastructureModule } from '@modules/infrastructure/infrastructure.module';
 import { AcademicModule } from '@modules/school-admin/academic/academic.module';
+import { EnrollmentModule } from '@modules/school-admin/enrollments/enrollment.module';
+import { SchoolProfileModule } from '@modules/school-admin/school-profile/school-profile.module';
 import { UsersModule } from '@modules/school-admin/users/users.module';
 import { HealthController } from './app/health.controller';
 import { RootController } from './app/root.controller';
@@ -30,6 +32,8 @@ import { TenantMiddleware } from '@common/middleware/tenant.middleware';
     SuperAdminModule,
     InfrastructureModule,
     AcademicModule,
+    EnrollmentModule,
+    SchoolProfileModule,
     UsersModule,
   ],
   controllers: [HealthController, RootController],

@@ -111,6 +111,16 @@ export class ListClassesQueryDto {
   @IsString()
   academicYearId?: string;
 
+  @ApiPropertyOptional({ example: 'cmbx123level01', description: 'Filtrer les classes par niveau' })
+  @IsOptional()
+  @IsString()
+  level?: string;
+
+  @ApiPropertyOptional({ example: 'cmbx123level01', description: 'Alias du filtre niveau' })
+  @IsOptional()
+  @IsString()
+  levelId?: string;
+
   @ApiPropertyOptional({ enum: ClassStatusValues })
   @IsOptional()
   @IsEnum(ClassStatusValues)

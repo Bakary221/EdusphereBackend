@@ -135,17 +135,19 @@ export class InfrastructureService {
     }
   }
 
-  private isSchemaMismatchError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
-    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+  private isSchemaMismatchError(error: unknown): boolean {
+    if (!error || typeof error !== 'object' || !('code' in error) || typeof (error as { code?: unknown }).code !== 'string') {
       return false;
     }
 
-    if (error.code === 'P2021' || error.code === 'P2022') {
+    const code = (error as { code?: string }).code;
+
+    if (code === 'P2021' || code === 'P2022') {
       return true;
     }
 
-    if (error.code === 'P2010') {
-      const meta = error.meta as { code?: unknown; message?: unknown } | undefined;
+    if (code === 'P2010') {
+      const meta = (error as { meta?: { code?: unknown; message?: unknown } }).meta;
       const dbCode = typeof meta?.code === 'string' ? meta.code : '';
       const message = typeof meta?.message === 'string' ? meta.message : '';
       return dbCode === '42P01' || /relation .* does not exist/i.test(message) || /table .* does not exist/i.test(message);

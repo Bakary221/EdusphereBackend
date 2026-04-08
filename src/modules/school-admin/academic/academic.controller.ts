@@ -263,6 +263,7 @@ export class AcademicController {
   @Get('classes')
   @ApiOperation({ summary: 'Lister les classes' })
   @ApiQuery({ name: 'academicYearId', required: false, description: 'Filtrer les classes par année scolaire' })
+  @ApiQuery({ name: 'level', required: false, description: 'Filtrer les classes par niveau' })
   @ApiQuery({
     name: 'status',
     required: false,

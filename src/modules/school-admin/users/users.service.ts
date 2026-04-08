@@ -1,9 +1,21 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { TenantDatabaseService } from '@database/tenant-database.service';
+import { TenantProvisioningService } from '@database/tenant-provisioning.service';
 import { ITenant } from '@common/interfaces/tenant.interface';
+import {
+  buildStudentQrCode,
+  deriveAcademicYearSuffix,
+  formatSequenceCode,
+} from '../shared/enrollment-code.util';
 import { refreshCompletedSemesterAverages } from '../shared/semester-average.util';
+import { withTenantSchemaRepair } from '../shared/schema-repair.util';
 import {
   CreateParentDto,
   CreateStaffDto,
@@ -35,6 +47,7 @@ export class UsersService {
   constructor(
     private readonly tenantDatabaseService: TenantDatabaseService,
     private readonly config: ConfigService,
+    private readonly tenantProvisioningService: TenantProvisioningService,
   ) {}
 
   async listTeachers(tenant: ITenant | null): Promise<any[]> {
@@ -168,168 +181,252 @@ export class UsersService {
   }
 
   async listStudents(tenant: ITenant | null, query: ListStudentsQueryDto = {}): Promise<any[]> {
-    const client = await this.getClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const academicYearId = query.academicYearId ?? (await this.getDefaultAcademicYearId(client, schoolId));
-    const students = await client.user.findMany({
-      where: {
-        role: 'STUDENT',
-        ...(academicYearId ? { studentProfile: { is: { academicYearId } } } : {}),
-      },
-      include: {
-        studentProfile: {
-          include: {
-            academicYear: true,
-            class: true,
+    return withTenantSchemaRepair(tenant, this.tenantProvisioningService, async () => {
+      const client = await this.getClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const academicYearId = query.academicYearId ?? (await this.getDefaultAcademicYearId(client, schoolId));
+      const students = await client.user.findMany({
+        where: {
+          role: 'STUDENT',
+          ...(academicYearId ? { studentProfile: { is: { academicYearId } } } : {}),
+        },
+        include: {
+          studentProfile: {
+            include: {
+              academicYear: true,
+              class: {
+                include: {
+                  level: true,
+                },
+              },
+              parentUser: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+      });
 
-    return students.map((student: any) => this.mapStudent(student));
+      return students.map((student: any) => this.mapStudent(student));
+    });
+  }
+
+  async findStudentByMatricule(tenant: ITenant | null, matricule: string): Promise<any> {
+    return withTenantSchemaRepair(tenant, this.tenantProvisioningService, async () => {
+      const client = await this.getClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const student = await client.user.findFirst({
+        where: {
+          role: 'STUDENT',
+          studentProfile: {
+            is: {
+              schoolId,
+              matricule: matricule.trim(),
+            },
+          },
+        },
+        include: {
+          studentProfile: {
+            include: {
+              academicYear: true,
+              class: true,
+              parentUser: true,
+            },
+          },
+        },
+      });
+
+      if (!student) {
+        throw new NotFoundException('Élève introuvable');
+      }
+
+      return this.mapStudent(student);
+    });
   }
 
   async createStudent(tenant: ITenant | null, dto: CreateStudentDto): Promise<any> {
-    const client = await this.getClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const passwordHash = await this.hashTempPassword();
-    const academicYearId = dto.academicYearId ?? (await this.getDefaultAcademicYearId(client, schoolId));
-    if (!academicYearId) {
-      throw new BadRequestException('Aucune année scolaire active n’est disponible.');
-    }
-    await this.requireAcademicYear(client, schoolId, academicYearId);
-    const schoolClass = await this.requireClass(client, schoolId, dto.classId);
+    return withTenantSchemaRepair(tenant, this.tenantProvisioningService, async () => {
+      const client = await this.getClient(tenant);
+      const school = this.requireTenant(tenant);
+      const schoolId = school.id;
+      const passwordHash = await this.hashTempPassword();
+      const academicYearId = dto.academicYearId ?? (await this.getDefaultAcademicYearId(client, schoolId));
+      if (!academicYearId) {
+        throw new BadRequestException('Aucune année scolaire active n’est disponible.');
+      }
+      await this.requireAcademicYear(client, schoolId, academicYearId);
+      const schoolClass = await this.requireClass(client, schoolId, dto.classId);
+      const email = dto.email.trim().toLowerCase();
 
-    if (schoolClass.academicYearId && schoolClass.academicYearId !== academicYearId) {
-      throw new BadRequestException('La classe sélectionnée n’est pas rattachée à l’année scolaire active.');
-    }
-
-    const created = await client.$transaction(async (tx: any) => {
-      const user = await tx.user.create({
-        data: {
-          email: dto.email.trim().toLowerCase(),
-          passwordHash,
-          firstName: dto.firstName.trim(),
-          lastName: dto.name.trim(),
-          role: 'STUDENT',
-          phone: dto.phone?.trim() || null,
-          isActive: dto.isActive ?? true,
-          emailVerified: true,
+      const existingEmail = await client.user.findFirst({
+        where: {
+          email,
         },
       });
 
-      await tx.studentProfile.create({
-        data: {
-          schoolId,
-          userId: user.id,
-          academicYearId,
-          classId: dto.classId,
-          average: dto.average ?? 0,
-          enrollmentYear: dto.enrollmentYear ?? (await this.getAcademicYearName(tx, schoolId, academicYearId)),
-          dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
-          gender: dto.gender?.trim() || null,
-          address: dto.address?.trim() || null,
-          parentName: dto.parentName?.trim() || null,
-          parentPhone: dto.parentPhone?.trim() || null,
-        },
-      });
+      if (existingEmail) {
+        throw new ConflictException('Un compte existe déjà avec cet email.');
+      }
 
-      await refreshCompletedSemesterAverages(tx, schoolId);
+      if (schoolClass.academicYearId && schoolClass.academicYearId !== academicYearId) {
+        throw new BadRequestException('La classe sélectionnée n’est pas rattachée à l’année scolaire active.');
+      }
 
-      return tx.user.findUnique({
-        where: { id: user.id },
-        include: {
-          studentProfile: {
-            include: {
-              academicYear: true,
-              class: true,
+      const created = await client.$transaction(async (tx: any) => {
+        const classCapacityCount = await tx.studentProfile.count({
+          where: {
+            schoolId,
+            classId: schoolClass.id,
+          },
+        });
+
+        if (classCapacityCount >= schoolClass.capacity) {
+          throw new BadRequestException('La classe sélectionnée est complète.');
+        }
+
+        const academicYearName = await this.getAcademicYearName(tx, schoolId, academicYearId);
+        const matricule = await this.generateStudentMatricule(tx, schoolId, academicYearName);
+        const qrCode = buildStudentQrCode(school.slug, matricule);
+        const user = await tx.user.create({
+          data: {
+            email,
+            passwordHash,
+            firstName: dto.firstName.trim(),
+            lastName: dto.name.trim(),
+            role: 'STUDENT',
+            phone: dto.phone?.trim() || null,
+            isActive: dto.isActive ?? true,
+            emailVerified: true,
+          },
+        });
+
+        await tx.studentProfile.create({
+          data: {
+            schoolId,
+            userId: user.id,
+            academicYearId,
+            classId: dto.classId,
+            average: dto.average ?? 0,
+            matricule,
+            qrCode,
+            enrollmentYear: dto.enrollmentYear ?? academicYearName,
+            dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
+            gender: dto.gender?.trim() || null,
+            address: dto.address?.trim() || null,
+            parentName: dto.parentName?.trim() || null,
+            parentPhone: dto.parentPhone?.trim() || null,
+          },
+        });
+
+        await refreshCompletedSemesterAverages(tx, schoolId);
+
+        return tx.user.findUnique({
+          where: { id: user.id },
+          include: {
+            studentProfile: {
+              include: {
+                academicYear: true,
+                class: {
+                  include: {
+                    level: true,
+                  },
+                },
+                parentUser: true,
+              },
             },
           },
-        },
+        });
       });
-    });
 
-    return this.mapStudent(created);
+      return this.mapStudent(created);
+    });
   }
 
   async updateStudent(tenant: ITenant | null, id: string, dto: UpdateStudentDto): Promise<any> {
-    const client = await this.getClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const existing = await this.requireStudent(client, id);
+    return withTenantSchemaRepair(tenant, this.tenantProvisioningService, async () => {
+      const client = await this.getClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const existing = await this.requireStudent(client, id);
 
-    if (dto.classId !== undefined || dto.academicYearId !== undefined) {
-      const resolvedAcademicYearId =
-        dto.academicYearId ?? existing.studentProfile?.academicYearId ?? (await this.getDefaultAcademicYearId(client, schoolId));
+      if (dto.classId !== undefined || dto.academicYearId !== undefined) {
+        const resolvedAcademicYearId =
+          dto.academicYearId ?? existing.studentProfile?.academicYearId ?? (await this.getDefaultAcademicYearId(client, schoolId));
 
-      if (resolvedAcademicYearId) {
-        await this.requireAcademicYear(client, schoolId, resolvedAcademicYearId);
+        if (resolvedAcademicYearId) {
+          await this.requireAcademicYear(client, schoolId, resolvedAcademicYearId);
+        }
+
+        const schoolClass = dto.classId !== undefined
+          ? await this.requireClass(client, schoolId, dto.classId)
+          : existing.studentProfile?.class;
+
+        if (schoolClass?.academicYearId && resolvedAcademicYearId && schoolClass.academicYearId !== resolvedAcademicYearId) {
+          throw new BadRequestException('La classe sélectionnée n’est pas rattachée à l’année scolaire choisie.');
+        }
       }
 
-      const schoolClass = dto.classId !== undefined
-        ? await this.requireClass(client, schoolId, dto.classId)
-        : existing.studentProfile?.class;
+      const updated = await client.$transaction(async (tx: any) => {
+        const user = await tx.user.update({
+          where: { id },
+          data: {
+            ...(dto.email !== undefined ? { email: dto.email.trim().toLowerCase() } : {}),
+            ...(dto.firstName !== undefined ? { firstName: dto.firstName.trim() } : {}),
+            ...(dto.name !== undefined ? { lastName: dto.name.trim() } : {}),
+            ...(dto.phone !== undefined ? { phone: dto.phone?.trim() || null } : {}),
+            ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+          },
+        });
 
-      if (schoolClass?.academicYearId && resolvedAcademicYearId && schoolClass.academicYearId !== resolvedAcademicYearId) {
-        throw new BadRequestException('La classe sélectionnée n’est pas rattachée à l’année scolaire choisie.');
-      }
-    }
+        await tx.studentProfile.update({
+          where: { userId: id },
+          data: {
+            ...(dto.classId !== undefined ? { classId: dto.classId || null } : {}),
+            ...(dto.academicYearId !== undefined ? { academicYearId: dto.academicYearId || null } : {}),
+            ...(dto.average !== undefined ? { average: dto.average } : {}),
+            ...(dto.enrollmentYear !== undefined ? { enrollmentYear: dto.enrollmentYear.trim() } : {}),
+            ...(dto.dateOfBirth !== undefined ? { dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null } : {}),
+            ...(dto.gender !== undefined ? { gender: dto.gender?.trim() || null } : {}),
+            ...(dto.address !== undefined ? { address: dto.address?.trim() || null } : {}),
+            ...(dto.parentName !== undefined ? { parentName: dto.parentName?.trim() || null } : {}),
+            ...(dto.parentPhone !== undefined ? { parentPhone: dto.parentPhone?.trim() || null } : {}),
+          },
+        });
 
-    const updated = await client.$transaction(async (tx: any) => {
-      const user = await tx.user.update({
-        where: { id },
-        data: {
-          ...(dto.email !== undefined ? { email: dto.email.trim().toLowerCase() } : {}),
-          ...(dto.firstName !== undefined ? { firstName: dto.firstName.trim() } : {}),
-          ...(dto.name !== undefined ? { lastName: dto.name.trim() } : {}),
-          ...(dto.phone !== undefined ? { phone: dto.phone?.trim() || null } : {}),
-          ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
-        },
-      });
+        await refreshCompletedSemesterAverages(tx, schoolId);
 
-      await tx.studentProfile.update({
-        where: { userId: id },
-        data: {
-          ...(dto.classId !== undefined ? { classId: dto.classId || null } : {}),
-          ...(dto.academicYearId !== undefined ? { academicYearId: dto.academicYearId || null } : {}),
-          ...(dto.average !== undefined ? { average: dto.average } : {}),
-          ...(dto.enrollmentYear !== undefined ? { enrollmentYear: dto.enrollmentYear.trim() } : {}),
-          ...(dto.dateOfBirth !== undefined ? { dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null } : {}),
-          ...(dto.gender !== undefined ? { gender: dto.gender?.trim() || null } : {}),
-          ...(dto.address !== undefined ? { address: dto.address?.trim() || null } : {}),
-          ...(dto.parentName !== undefined ? { parentName: dto.parentName?.trim() || null } : {}),
-          ...(dto.parentPhone !== undefined ? { parentPhone: dto.parentPhone?.trim() || null } : {}),
-        },
-      });
-
-      await refreshCompletedSemesterAverages(tx, schoolId);
-
-      return tx.user.findUnique({
-        where: { id },
-        include: {
-          studentProfile: {
-            include: {
-              academicYear: true,
-              class: true,
+        return tx.user.findUnique({
+          where: { id },
+          include: {
+            studentProfile: {
+              include: {
+                academicYear: true,
+                class: {
+                  include: {
+                    level: true,
+                  },
+                },
+                parentUser: true,
+              },
             },
           },
-        },
+        });
       });
-    });
 
-    return this.mapStudent(updated, existing);
+      return this.mapStudent(updated, existing);
+    });
   }
 
   async deleteStudent(tenant: ITenant | null, id: string): Promise<any> {
-    const client = await this.getClient(tenant);
-    const schoolId = this.requireTenant(tenant).id;
-    const student = await client.$transaction(async (tx: any) => {
-      const existing = await this.requireStudent(tx, id);
-      await tx.user.delete({ where: { id } });
-      await refreshCompletedSemesterAverages(tx, schoolId);
-      return existing;
+    return withTenantSchemaRepair(tenant, this.tenantProvisioningService, async () => {
+      const client = await this.getClient(tenant);
+      const schoolId = this.requireTenant(tenant).id;
+      const student = await client.$transaction(async (tx: any) => {
+        const existing = await this.requireStudent(tx, id);
+        await tx.user.delete({ where: { id } });
+        await refreshCompletedSemesterAverages(tx, schoolId);
+        return existing;
+      });
+      return this.mapStudent(student);
     });
-    return this.mapStudent(student);
   }
 
   async listParents(tenant: ITenant | null): Promise<any[]> {
@@ -557,14 +654,19 @@ export class UsersService {
   private async requireStudent(client: any, id: string): Promise<any> {
     const student = await client.user.findFirst({
       where: { id, role: 'STUDENT' },
-      include: {
-        studentProfile: {
-          include: {
-            academicYear: true,
-            class: true,
+        include: {
+          studentProfile: {
+            include: {
+              academicYear: true,
+              class: {
+                include: {
+                  level: true,
+                },
+              },
+              parentUser: true,
+            },
           },
         },
-      },
     });
 
     if (!student) {
@@ -656,6 +758,113 @@ export class UsersService {
     return year?.name ?? new Date().getFullYear().toString();
   }
 
+  private async nextSequence(
+    client: any,
+    schoolId: string,
+    academicYearName: string,
+    kind: string,
+  ): Promise<number> {
+    const academicYearSuffix = deriveAcademicYearSuffix(academicYearName);
+    const existingMax = await this.getExistingSequenceMax(client, schoolId, academicYearSuffix, kind);
+    const where = {
+      schoolId_academicYearId_kind: {
+        schoolId,
+        academicYearId: academicYearSuffix,
+        kind,
+      },
+    };
+
+    const counter = await client.sequenceCounter.findUnique({ where });
+
+    if (!counter) {
+      const created = await client.sequenceCounter.create({
+        data: {
+          schoolId,
+          academicYearId: academicYearSuffix,
+          kind,
+          currentValue: Math.max(1, existingMax + 1),
+        },
+      });
+
+      return created.currentValue;
+    }
+
+    const nextValue = Math.max(counter.currentValue, existingMax) + 1;
+
+    if (counter.currentValue < existingMax) {
+      const updated = await client.sequenceCounter.update({
+        where,
+        data: {
+          currentValue: nextValue,
+        },
+      });
+
+      return updated.currentValue;
+    }
+
+    const updated = await client.sequenceCounter.update({
+      where,
+      data: {
+        currentValue: { increment: 1 },
+      },
+    });
+
+    return updated.currentValue;
+  }
+
+  private async getExistingSequenceMax(
+    client: any,
+    schoolId: string,
+    academicYearSuffix: string,
+    kind: string,
+  ): Promise<number> {
+    if (kind !== 'matricule') {
+      return 0;
+    }
+
+    const prefix = `SCH-${academicYearSuffix}-`;
+    const records = await client.studentProfile.findMany({
+      where: {
+        schoolId,
+        matricule: {
+          startsWith: prefix,
+        },
+      },
+      select: {
+        matricule: true,
+      },
+    });
+
+    return records.reduce((max: number, record: { matricule: string | null }) => {
+      if (!record.matricule) {
+        return max;
+      }
+
+      const value = this.extractSequenceValue(record.matricule, [prefix]);
+      return value > max ? value : max;
+    }, 0);
+  }
+
+  private extractSequenceValue(code: string, prefixes: string[]): number {
+    for (const prefix of prefixes) {
+      if (code.startsWith(prefix)) {
+        const value = Number.parseInt(code.slice(prefix.length), 10);
+        return Number.isFinite(value) ? value : 0;
+      }
+    }
+
+    return 0;
+  }
+
+  private async generateStudentMatricule(
+    client: any,
+    schoolId: string,
+    academicYearName: string,
+  ): Promise<string> {
+    const sequence = await this.nextSequence(client, schoolId, academicYearName, 'matricule');
+    return formatSequenceCode('SCH', deriveAcademicYearSuffix(academicYearName), sequence);
+  }
+
   private mapTeacher(teacher: any): any {
     const profile = teacher.teacherProfile;
     const subjectLinks = profile?.subjectLinks ?? [];
@@ -675,6 +884,8 @@ export class UsersService {
 
   private mapStudent(student: any, fallback?: any): any {
     const profile = student.studentProfile ?? fallback?.studentProfile;
+    const parentUser = profile?.parentUser ?? fallback?.studentProfile?.parentUser;
+    const parentNameParts = (profile?.parentName ?? '').trim().split(/\s+/).filter(Boolean);
     return {
       id: student.id,
       firstName: student.firstName,
@@ -686,12 +897,22 @@ export class UsersService {
       status: student.isActive ? 'active' : 'inactive',
       average: profile?.average ?? 0,
       enrollmentYear: profile?.enrollmentYear ?? '',
-      parentName: profile?.parentName ?? '',
-      parentPhone: profile?.parentPhone ?? '',
+      matricule: profile?.matricule ?? '',
+      qrCode: profile?.qrCode ?? '',
+      levelId: profile?.class?.levelId ?? '',
+      level: profile?.class?.level?.name ?? '',
+      parentName:
+        profile?.parentName ??
+        (parentUser ? `${parentUser.firstName} ${parentUser.lastName}`.trim() : ''),
+      parentFirstName: parentUser?.firstName ?? parentNameParts[0] ?? '',
+      parentLastName: parentUser?.lastName ?? parentNameParts.slice(1).join(' ') ?? '',
+      parentPhone: profile?.parentPhone ?? parentUser?.phone ?? '',
+      parentUserId: profile?.parentUserId ?? '',
       academicYearId: profile?.academicYearId ?? '',
       dateOfBirth: profile?.dateOfBirth ? this.toDateOnly(profile.dateOfBirth) : '',
       gender: profile?.gender ?? '',
       address: profile?.address ?? '',
+      previousSchool: profile?.previousSchool ?? '',
     };
   }
 
